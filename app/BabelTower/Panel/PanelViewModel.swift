@@ -48,8 +48,8 @@ private enum ImageInput: Sendable {
 }
 
 /// 浮窗视图模型：一轮翻译的完整状态机。
-/// 事件消费来自 TranslationEngine；剪贴板带入来自 ClipboardMonitor；
-/// 复制写剪贴板并标记 ownWrite；收起不清内容（保留 10 分钟）。
+/// 事件消费来自 TranslationEngine；只在 ↩ / ⌘R 时发请求（粘贴、切语言都不自动翻译）；
+/// 呼出不读剪贴板；收起不清内容（保留 10 分钟）；成功完成的一轮写入翻译历史。
 @MainActor
 final class PanelViewModel: ObservableObject {
 
@@ -73,6 +73,10 @@ final class PanelViewModel: ObservableObject {
     /// 图钉固定状态：固定时点击外部/Esc 不收起、↩ 复制不收起。
     /// 不跨呼出记忆：呼出时复位。
     @Published private(set) var isPinned = false
+    /// 历史列表是否显示（替换输入区与结果区）
+    @Published private(set) var isShowingHistory = false
+    /// 历史列表当前选中项
+    @Published var historySelectionID: UUID?
 
     /// 主语言 / 常用外语（默认简中、英语）。闭包调用时求值：
     /// 设置里的修改从下一轮翻译起生效。
@@ -85,15 +89,22 @@ final class PanelViewModel: ObservableObject {
 
     private let engine: TranslationEngine
     private let settings: ModelServiceSettings
-    private let clipboardMonitor: ClipboardMonitor
     private let pasteboard: NSPasteboard
     private let now: () -> Date
     private let collapseHandler: () -> Void
+    /// 翻译历史；nil = 不记录、不提供列表（部分测试）
+    let history: HistoryStore?
+    /// 设置「保存翻译历史」开关。闭包调用时求值
+    private let shouldSaveHistory: () -> Bool
 
     /// 本轮翻译发起时的输入（判定"完成后 ↩ 且输入未改"才复制收起）
     private var inputAtRoundStart = ""
     /// 本轮翻译发起时的图片（按身份比对：删一张再加一张数量不变，但内容变了）
     private var imageIDsAtRoundStart: [UUID] = []
+    /// 本轮翻译发起时的目标语言（切语言后 ↩ 应按新语言重译，不复制旧译文）
+    private var targetAtRoundStart: TargetMode = .automatic
+    /// 本轮翻译发起时发送的图片（完成后写入历史）
+    private var imagesAtRoundStart: [ProcessedImage] = []
     /// 最近一轮活动时间（收起时锚定，10 分钟保留判定）
     private var lastRoundActivityAt: Date?
     private var copyConfirmTask: Task<Void, Never>?
@@ -110,18 +121,20 @@ final class PanelViewModel: ObservableObject {
 
     init(engine: TranslationEngine,
          settings: ModelServiceSettings,
-         clipboardMonitor: ClipboardMonitor,
          pasteboard: NSPasteboard = .general,
          now: @escaping () -> Date = { Date() },
          collapse: @escaping () -> Void,
          mainLanguage: @escaping () -> TranslationLanguage = { .zhHans },
          foreignLanguage: @escaping () -> TranslationLanguage = { .en },
          customPrompt: @escaping () -> String = { "" },
-         imageProcessingMode: ImageProcessingMode = .background) {
+         imageProcessingMode: ImageProcessingMode = .background,
+         history: HistoryStore? = nil,
+         shouldSaveHistory: @escaping () -> Bool = { true }) {
+        self.history = history
+        self.shouldSaveHistory = shouldSaveHistory
         self.imageProcessingMode = imageProcessingMode
         self.engine = engine
         self.settings = settings
-        self.clipboardMonitor = clipboardMonitor
         self.pasteboard = pasteboard
         self.now = now
         self.collapseHandler = collapse
@@ -132,10 +145,12 @@ final class PanelViewModel: ObservableObject {
 
     // MARK: 呼出 / 收起
 
-    /// 呼出：新鲜剪贴板带入（文字）；否则 10 分钟内保留上轮内容。
+    /// 呼出：不读剪贴板；10 分钟内保留上轮内容，否则为空。
     func panelWillShow() {
         // 固定状态不跨呼出记忆：呼出恢复非固定
         isPinned = false
+        // 每次呼出回到翻译界面（历史列表不跨呼出保持）
+        isShowingHistory = false
         // 呼出即预热连接：配置可解析就先建连压首字延迟。
         // best-effort：配置未就绪时跳过，真正翻译时再给出配置提示
         do {
@@ -144,29 +159,7 @@ final class PanelViewModel: ObservableObject {
             // 配置问题在翻译时提示，预热静默跳过
         }
 
-        if let snapshot = clipboardMonitor.lastSnapshot,
-           clipboardMonitor.isFreshContent(snapshot) {
-            switch ClipboardParser.parse(pasteboard) {
-            case .plainText(let text):
-                clipboardMonitor.markConsumed(snapshot)
-                startNewRound(withInput: text)   // 自动带入并翻译
-                return
-            case .imageFiles(let urls):
-                clipboardMonitor.markConsumed(snapshot)
-                startNewRound()
-                handlePasteImageFiles(urls)
-                return
-            case .imageBitmap(let data):
-                clipboardMonitor.markConsumed(snapshot)
-                startNewRound()
-                handlePasteImage(data: data)
-                return
-            case nil:
-                break
-            }
-        }
-
-        // 无新内容：保留期内的上一轮继续显示
+        // 保留期内的上一轮继续显示
         if let lastActivity = lastRoundActivityAt,
            now().timeIntervalSince(lastActivity) <= BehaviorConstants.contentRetentionInterval {
             return
@@ -183,19 +176,11 @@ final class PanelViewModel: ObservableObject {
 
     // MARK: 输入与触发
 
-    /// 粘贴文字：向空输入区（无文字无图片）粘贴立即翻译；已有内容只追加等待 ↩（图片也是内容）。
-    /// 空区粘贴视为新一轮（手动目标复位，与 ⌘N / 呼出带入一致）。
+    /// 粘贴文字：只放进输入区（空区填入、已有内容追加），不翻译，等待 ↩。
+    /// 不复位手动选择的目标语言（可以先选语言再粘贴）。
     func handlePaste(_ text: String) {
         guard !text.isEmpty else { return }
-        if inputText.isEmpty && images.isEmpty && !hasPendingImages {
-            targetMode = .automatic
-            inputText = text
-            if !isInputOverLimit {
-                startTranslation()
-            }
-        } else {
-            inputText += text
-        }
+        inputText += text
     }
 
     /// ↩：未发送→翻译；已完成且输入未改→复制并收起（
@@ -207,19 +192,23 @@ final class PanelViewModel: ObservableObject {
             return
         }
         // 输入未改 = 文字与图片都与本轮发起时一致（删图也是改动，否则删图后 ↩ 会复制旧译文）
-        if case .finished = phase, inputText == inputAtRoundStart,
-           images.map(\.id) == imageIDsAtRoundStart, !resultText.isEmpty {
+        if case .finished = phase, isRoundContentUnchanged, !resultText.isEmpty {
             copyResult(selection: nil, andCollapse: !isPinned)
             return
         }
         // 翻译中且输入与图片都未改：no-op，不重复发请求（浪费 token）
-        if case .translating = phase, inputText == inputAtRoundStart,
-           images.map(\.id) == imageIDsAtRoundStart {
+        if case .translating = phase, isRoundContentUnchanged {
             return
         }
         guard !inputText.isEmpty || !images.isEmpty else { return }
         guard !isInputOverLimit else { return }
         startTranslation()
+    }
+
+    /// 文字、图片、目标语言都与本轮发起时一致。
+    private var isRoundContentUnchanged: Bool {
+        inputText == inputAtRoundStart && images.map(\.id) == imageIDsAtRoundStart
+            && targetMode == targetAtRoundStart
     }
 
     /// ⌘R：相同输入重新翻译。
@@ -239,16 +228,14 @@ final class PanelViewModel: ObservableObject {
         resetToEmpty()
     }
 
-    /// ⌘1–4 / ⌘0：切换目标语言；已有输入立即重译；手动只本轮有效。
+    /// ⌘1–4 / ⌘0：切换目标语言，只改选择不发请求（↩ 才按新语言翻译）；手动只本轮有效。
     func setTargetMode(_ mode: TargetMode) {
+        guard mode != targetMode else { return }
         targetMode = mode
-        // 图片也是输入：纯图片时同样立即重译。图片还在处理时记下意图，处理完按新语言翻译
-        if hasPendingImages {
-            translateWhenImagesReady = true
-            return
-        }
-        if !inputText.isEmpty || !images.isEmpty, !isInputOverLimit {
-            startTranslation()
+        // 语言变了：上一轮的译入语言高亮与提示失效；完成态回到待发送，↩ 将按新语言重译而不是复制旧译文
+        marker = nil
+        if phase == .finished {
+            phase = hasInputContent ? .composing : .empty
         }
     }
 
@@ -266,8 +253,6 @@ final class PanelViewModel: ObservableObject {
         guard !text.isEmpty else { return }
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        // 本 App 写入不算新内容
-        clipboardMonitor.noteOwnWrite(changeCount: pasteboard.changeCount)
         flashCopyConfirmation()
         if andCollapse {
             endRound()
@@ -348,27 +333,6 @@ final class PanelViewModel: ObservableObject {
         }
     }
 
-    /// 新一轮：带入剪贴板内容（自动目标复位 新一轮回自动）。
-    private func startNewRound(withInput text: String) {
-        startNewRound()
-        inputText = text
-        if isInputOverLimit {
-            phase = .composing   // 超限带入：不发包，显示字数等用户处理
-            return
-        }
-        startTranslation()
-    }
-
-    private func startNewRound() {
-        targetMode = .automatic
-        discardPendingImages()
-        images = []
-        imageNotice = nil
-        resultText = ""
-        marker = nil
-        inputText = ""
-    }
-
     private func startTranslation() {
         let config: ResolvedServiceConfig
         do {
@@ -388,6 +352,8 @@ final class PanelViewModel: ObservableObject {
 
         inputAtRoundStart = inputText
         imageIDsAtRoundStart = images.map(\.id)
+        targetAtRoundStart = targetMode
+        imagesAtRoundStart = images.map(\.processed)
         imageNotice = nil
         resultText = ""
         marker = nil
@@ -414,7 +380,7 @@ final class PanelViewModel: ObservableObject {
 
     // MARK: 图片输入
 
-    /// 粘贴位图：解码→预处理→追加→立即按全部内容重译；超上限/失败给提示。
+    /// 粘贴位图：解码→预处理→追加（不翻译，等 ↩）；超上限/失败给提示。
     func handlePasteImage(data: Data) {
         enqueueImages([.data(data)])
     }
@@ -445,7 +411,7 @@ final class PanelViewModel: ObservableObject {
     /// 输入区是否已有内容（文字或图片）。
     var hasInputContent: Bool { !inputText.isEmpty || !images.isEmpty || pendingImageCount > 0 }
 
-    /// 从粘贴板取内容分发给文字 / 图片处理（⌘V、拖入、呼出带入共用）。
+    /// 从粘贴板取内容分发给文字 / 图片处理（⌘V、拖入共用）。
     func handlePasteboardContent(_ pasteboard: NSPasteboard) {
         switch ClipboardParser.parse(pasteboard) {
         case .plainText(let text):
@@ -484,7 +450,7 @@ final class PanelViewModel: ObservableObject {
     }
 
     /// 一次添加动作 = 一批图片：受 4 张上限约束（已处理的 + 处理中的），处理完按添加顺序追加，
-    /// 只要追加了图片就立即按全部内容重译（粘贴图片立即翻译，取消当前请求）。
+    /// 不翻译（↩ 才发请求；处理期间按了 ↩ 则处理完统一发一次）。
     /// 后台模式下处理在后台线程执行（4800 万像素 HEIC 单张约 100ms，多张会卡界面）。
     private func enqueueImages(_ inputs: [ImageInput]) {
         guard !inputs.isEmpty else { return }
@@ -500,7 +466,6 @@ final class PanelViewModel: ObservableObject {
             finishImageBatch(batch.map { $0.process() })
         case .background:
             pendingImageCount += batch.count
-            translateWhenImagesReady = true   // 粘贴图片 = 要翻译
             imagesDidChangeByUser()           // 内容已变：完成态回到待发送，↩ 不会复制旧译文
             let generation = imageBatchGeneration
             let previous = imageBatchChain
@@ -537,13 +502,14 @@ final class PanelViewModel: ObservableObject {
         } else if appended, imageNotice != AppText.panelTooManyImages {
             imageNotice = nil
         }
+        if appended {
+            imagesDidChangeByUser()   // 内容已变：完成态回到待发送
+        }
         switch imageProcessingMode {
         case .synchronous:
-            if appended, !isInputOverLimit {
-                startTranslation()
-            }
+            break
         case .background:
-            // 全部批次处理完才发一次请求；中途的翻译意图（↩ / 切语言）在这里兑现
+            // 全部批次处理完才发一次请求；处理期间的翻译意图（↩ / ⌘R）在这里兑现
             guard !hasPendingImages, translateWhenImagesReady else { return }
             translateWhenImagesReady = false
             if hasInputContent, !isInputOverLimit {
@@ -573,15 +539,87 @@ final class PanelViewModel: ObservableObject {
             resultText = body
             phase = .finished
             lastRoundActivityAt = now()
+            saveRoundToHistory(marker: finishedMarker, body: body)
         case .failed(let failure):
             phase = .failed(failure)
             lastRoundActivityAt = now()
         }
     }
 
+    /// 成功完成的一轮写入历史（空译文、[[none]] 不存；设置关闭时不存）。
+    private func saveRoundToHistory(marker finishedMarker: MarkerParser.Marker, body: String) {
+        guard let history, shouldSaveHistory(),
+              !body.isEmpty, finishedMarker != MarkerParser.Marker.none else { return }
+        let targetLanguage: TranslationLanguage = {
+            if case .language(let language) = finishedMarker { return language }
+            if case .manual(let language) = targetAtRoundStart { return language }
+            return mainLanguage()
+        }()
+        let manualTarget: TranslationLanguage? = {
+            if case .manual(let language) = targetAtRoundStart { return language }
+            return nil
+        }()
+        history.add(HistoryRecord(
+            inputText: inputAtRoundStart,
+            images: imagesAtRoundStart,
+            resultText: body,
+            targetLanguage: targetLanguage,
+            manualTarget: manualTarget,
+            marker: finishedMarker
+        ))
+    }
+
+    // MARK: 历史列表
+
+    /// ⌘Y / 时钟按钮：打开或关闭历史列表。打开时默认选中最新一条。
+    func toggleHistory() {
+        guard history != nil else { return }
+        isShowingHistory.toggle()
+        if isShowingHistory {
+            historySelectionID = history?.entries.first?.id
+        }
+    }
+
+    /// ↑↓ 移动选中项（到头不循环）。
+    func moveHistorySelection(by offset: Int) {
+        guard let entries = history?.entries, !entries.isEmpty else { return }
+        let current = entries.firstIndex { $0.id == historySelectionID } ?? (offset > 0 ? -1 : entries.count)
+        let next = min(max(current + offset, 0), entries.count - 1)
+        historySelectionID = entries[next].id
+    }
+
+    /// ↩：载入选中项。
+    func confirmHistorySelection() {
+        guard let entry = history?.entries.first(where: { $0.id == historySelectionID }) else { return }
+        loadHistoryEntry(entry)
+    }
+
+    /// 载入一条历史：原文、图片、译文、目标语言回到浮窗，不重新请求；此时 ↩ 即复制。
+    func loadHistoryEntry(_ entry: HistoryEntry) {
+        guard let history else { return }
+        engine.cancel()
+        discardPendingImages()
+        let processed = history.loadImages(of: entry)
+        inputText = entry.inputText
+        images = processed.map { PanelImage(thumbnail: NSImage(data: $0.data) ?? NSImage(), processed: $0) }
+        imageNotice = nil
+        targetMode = entry.targetMode
+        resultText = entry.resultText
+        marker = entry.parsedMarker
+        phase = .finished
+        inputAtRoundStart = inputText
+        imageIDsAtRoundStart = images.map(\.id)
+        targetAtRoundStart = targetMode
+        imagesAtRoundStart = processed
+        lastRoundActivityAt = now()
+        isShowingHistory = false
+    }
+
     /// 一轮结束（复制带走）：手动目标复位，输入保留至保留期。
     private func endRound() {
         targetMode = .automatic
+        // 复位不算"改了语言"：保留期内再按 ↩ 仍是复制这轮译文
+        targetAtRoundStart = targetMode
         lastRoundActivityAt = now()
     }
 
@@ -592,6 +630,8 @@ final class PanelViewModel: ObservableObject {
         targetMode = .automatic
         inputAtRoundStart = ""
         imageIDsAtRoundStart = []
+        targetAtRoundStart = .automatic
+        imagesAtRoundStart = []
         phase = .empty
         isInputOverLimit = false
         discardPendingImages()

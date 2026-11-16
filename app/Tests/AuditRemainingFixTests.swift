@@ -29,7 +29,6 @@ final class AuditRemainingFixTests: XCTestCase {
         collapsed = false
         viewModel = PanelViewModel(
             engine: engine, settings: settings,
-            clipboardMonitor: ClipboardMonitor(initialChangeCount: 100, now: { Date() }),
             pasteboard: pasteboard, now: { Date() },
             collapse: { [self] in collapsed = true },
             imageProcessingMode: .synchronous)
@@ -184,6 +183,7 @@ final class AuditRemainingFixTests: XCTestCase {
     func testNetworkDropAfterFirstContentIsStreamInterrupted() async {
         FailingMidStreamURLProtocol.firstChunk = Self.chunkData("[[zh-Hans]]\n前半段译文")
         viewModel.handlePaste("Hello world")
+        viewModel.submit()   // 回车才翻译
         await waitForTerminalPhase()
         guard case .failed(.streamInterrupted) = viewModel.phase else {
             return XCTFail("首字之后断网应归为流式中断，实际：\(viewModel.phase)")
@@ -199,6 +199,7 @@ final class AuditRemainingFixTests: XCTestCase {
             .immediate(Data(#"data: {"error":{"message":"overloaded"}}"#.utf8) + Data("\n\n".utf8)),
         ] }
         viewModel.handlePaste("Hello world")
+        viewModel.submit()   // 回车才翻译
         await waitForTerminalPhase()
         try await Task.sleep(nanoseconds: 400_000_000)
         let contentView = try XCTUnwrap(controller.panelForTesting.contentView)

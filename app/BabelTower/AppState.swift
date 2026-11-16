@@ -7,7 +7,7 @@ extension KeyboardShortcuts.Name {
     static let togglePanel = Self("togglePanel")
 }
 
-/// 应用根状态：组装浮窗、视图模型、翻译引擎、服务配置与剪贴板监测。
+/// 应用根状态：组装浮窗、视图模型、翻译引擎、服务配置与翻译历史。
 /// ⌥T 在这里接到浮窗的呼出 / 收起。
 @MainActor
 final class AppState: ObservableObject {
@@ -15,14 +15,15 @@ final class AppState: ObservableObject {
     let modelServiceSettings = ModelServiceSettings()
     let appSettings = AppSettings()
     let panelController: PanelController
-    let clipboardMonitor = ClipboardMonitor()
     let translationEngine = TranslationEngine()
     private let menuBarController = MenuBarController()
     private let onboardingController = OnboardingController()
     private(set) var panelViewModel: PanelViewModel?
+    /// 翻译历史（测试宿主不创建，避免读写真实历史目录）
+    private(set) var historyStore: HistoryStore?
 
     /// 是否作为单元测试宿主启动。测试宿主是完整 App，但测试只需要其中的类型：
-    /// 不注册全局快捷键（不和正在用的那份抢 ⌥T）、不装菜单栏图标、不轮询剪贴板、
+    /// 不注册全局快捷键（不和正在用的那份抢 ⌥T）、不装菜单栏图标、
     /// 不读真实钥匙串（读不同签名创建的条目会弹授权框，测试卡死）。
     static let isRunningUnitTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
@@ -35,18 +36,19 @@ final class AppState: ObservableObject {
         if KeyboardShortcuts.getShortcut(for: .togglePanel) == nil {
             KeyboardShortcuts.setShortcut(.init(.t, modifiers: [.option]), for: .togglePanel)
         }
-        clipboardMonitor.startMonitoring()
         menuBarController.install(panelController: controller)
 
         // 内容闭包要引用 self，init 期间不能捕获；装配延后到初始化完成后。
         // 内容视图在首次呼出时才构建，此处时序无实际影响。
+        let historyStore = HistoryStore()
+        self.historyStore = historyStore
+
         Task { [weak self] in
             guard let self else { return }
             let appSettings = self.appSettings
             let viewModel = PanelViewModel(
                 engine: self.translationEngine,
                 settings: self.modelServiceSettings,
-                clipboardMonitor: self.clipboardMonitor,
                 collapse: { [weak self] in
                     self?.panelController.hidePanel()
                 },
@@ -54,7 +56,9 @@ final class AppState: ObservableObject {
                 mainLanguage: { [weak appSettings] in appSettings?.mainLanguage ?? .zhHans },
                 foreignLanguage: { [weak appSettings] in appSettings?.foreignLanguage ?? .en },
                 // 自定义提示词同样下一轮生效
-                customPrompt: { [weak appSettings] in appSettings?.customPrompt ?? "" }
+                customPrompt: { [weak appSettings] in appSettings?.customPrompt ?? "" },
+                history: historyStore,
+                shouldSaveHistory: { [weak appSettings] in appSettings?.saveHistory ?? true }
             )
             self.panelViewModel = viewModel
             controller.viewModel = viewModel
@@ -69,7 +73,7 @@ final class AppState: ObservableObject {
                 settingsContent: { [weak self] in
                     guard let self else { return NSHostingView(rootView: AnyView(EmptyView())) }
                     return NSHostingView(rootView: AnyView(
-                        SettingsView()
+                        SettingsView(history: self.historyStore)
                             .environmentObject(self.appSettings)
                             .environmentObject(self.modelServiceSettings)
                     ))

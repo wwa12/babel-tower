@@ -25,7 +25,6 @@ final class PanelShowPathDiagnostic: XCTestCase {
         Task { @MainActor in
             let viewModel = PanelViewModel(
                 engine: engine, settings: settings,
-                clipboardMonitor: ClipboardMonitor(initialChangeCount: 0, now: { Date() }),
                 pasteboard: NSPasteboard.withUniqueName(), now: { Date() }, collapse: {}
             )
             viewModelHolder.value = viewModel

@@ -8,7 +8,6 @@ import AppKit
 final class PanelImageTests: XCTestCase {
 
     private var viewModel: PanelViewModel!
-    private var monitor: ClipboardMonitor!
     private var pasteboard: NSPasteboard!
     private var settings: ModelServiceSettings!
     private var now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -18,7 +17,6 @@ final class PanelImageTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
         let engine = TranslationEngine(client: OpenAICompatibleClient(session: URLSession(configuration: config)))
-        monitor = ClipboardMonitor(initialChangeCount: 100, now: { [self] in now })
         pasteboard = NSPasteboard.withUniqueName()
         settings = ModelServiceSettings(
             keyStore: InMemoryAPIKeyStore(),
@@ -26,7 +24,7 @@ final class PanelImageTests: XCTestCase {
         )
         try settings.setAPIKey("虚构测试Key", forPresetID: "openai")
         viewModel = PanelViewModel(
-            engine: engine, settings: settings, clipboardMonitor: monitor,
+            engine: engine, settings: settings,
             pasteboard: pasteboard, now: { [self] in now }, collapse: {},
             imageProcessingMode: .synchronous
         )
@@ -88,11 +86,21 @@ final class PanelImageTests: XCTestCase {
         }
     }
 
-    // MARK: 粘贴图片（粘贴图片立即翻译；第二张两图重译）
+    // MARK: 粘贴图片（只放进输入区，↩ 才翻译；第二张后 ↩ 两图一起译）
 
-    func testPasteImageTranslatesImmediatelyWithContentParts() async throws {
+    func testPasteImageWaitsForEnter() async throws {
         stubSSE()
         viewModel.handlePasteImage(data: try pngData())
+        XCTAssertEqual(viewModel.images.count, 1)
+        XCTAssertEqual(viewModel.phase, .composing)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(StubURLProtocol.capturedRequests.count, 0, "粘贴图片不发请求")
+    }
+
+    func testPasteImageThenEnterTranslatesWithContentParts() async throws {
+        stubSSE()
+        viewModel.handlePasteImage(data: try pngData())
+        viewModel.submit()
         await waitForTerminal()
         XCTAssertEqual(viewModel.phase, .finished)
         XCTAssertEqual(viewModel.images.count, 1)
@@ -104,8 +112,11 @@ final class PanelImageTests: XCTestCase {
     func testSecondImageRetranslatesWithBoth() async throws {
         stubSSE()
         viewModel.handlePasteImage(data: try pngData())
+        viewModel.submit()
         await waitForTerminal()
         viewModel.handlePasteImage(data: try pngData(width: 20, height: 20))
+        XCTAssertEqual(viewModel.phase, .composing, "第二张只追加，等 ↩")
+        viewModel.submit()
         await waitForTerminal()
         try await Task.sleep(nanoseconds: 200_000_000)
         let body = try XCTUnwrap(requestBodyStrings().last)
@@ -117,6 +128,7 @@ final class PanelImageTests: XCTestCase {
         stubSSE()
         viewModel.inputText = "结合图里的语境"
         viewModel.handlePasteImage(data: try pngData())
+        viewModel.submit()
         await waitForTerminal()
         try await Task.sleep(nanoseconds: 200_000_000)
         let body = try XCTUnwrap(requestBodyStrings().last)
@@ -160,21 +172,19 @@ final class PanelImageTests: XCTestCase {
         XCTAssertEqual(viewModel.images.count, 1)
     }
 
-    // MARK: 呼出自动带入图片
+    // MARK: 呼出不带入图片
 
-    func testPanelShowBringsInFreshImage() async throws {
-        stubSSE()
+    func testPanelShowDoesNotBringInImage() async throws {
         pasteboard.setData(try pngData(), forType: .png)
-        monitor.update(changeCount: 101)
         viewModel.panelWillShow()
-        XCTAssertEqual(viewModel.images.count, 1, "新鲜图片自动带入")
-        await waitForTerminal()
+        XCTAssertEqual(viewModel.images.count, 0, "呼出不读剪贴板")
     }
 
     /// 有图片时粘贴文字：只追加等 ↩，不立即翻译（已有内容）。
     func testPasteTextWithExistingImageOnlyAppends() async throws {
         stubSSE()
         viewModel.handlePasteImage(data: try pngData())
+        viewModel.submit()
         await waitForTerminal()
         let requestsBefore = StubURLProtocol.capturedRequests.count
         viewModel.handlePaste("补充文字")

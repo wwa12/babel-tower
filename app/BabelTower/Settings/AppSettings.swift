@@ -48,6 +48,11 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// 保存翻译历史（默认开；关闭后不再新存，已有记录保留）。
+    @Published var saveHistory: Bool {
+        didSet { defaults.set(saveHistory, forKey: Keys.saveHistory) }
+    }
+
     /// 登录时启动开关（与系统登录项双向同步；SMAppService，macOS 13+）。
     @Published var launchAtLogin: Bool {
         didSet {
@@ -72,6 +77,7 @@ final class AppSettings: ObservableObject {
         static let foreignLanguage = "settings.foreignLanguage"
         static let onboardingCompleted = "settings.onboardingCompleted"
         static let customPrompt = "settings.customPrompt"
+        static let saveHistory = "settings.saveHistory"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -85,6 +91,7 @@ final class AppSettings: ObservableObject {
         hasCompletedOnboarding = defaults.bool(forKey: Keys.onboardingCompleted)
         // 无存量时预填默认模板全文
         customPrompt = defaults.string(forKey: Keys.customPrompt) ?? TranslationPrompt.builtinTemplate
+        saveHistory = defaults.object(forKey: Keys.saveHistory) as? Bool ?? true
         launchAtLogin = (SMAppService.mainApp.status == .enabled)
     }
 }

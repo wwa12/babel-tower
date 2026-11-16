@@ -119,12 +119,16 @@ final class FloatingPanelTests: XCTestCase {
     }
 
     @MainActor
-    func testNoWindowButtonsAndTransparentTitlebar() {
+    func testOnlyCloseButtonAndTransparentTitlebar() {
         let panel = makePanel()
-        for buttonType: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+        for buttonType: NSWindow.ButtonType in [.miniaturizeButton, .zoomButton] {
             let button = panel.standardWindowButton(buttonType)
             XCTAssertTrue(button?.isHidden ?? true, "\(buttonType) 按钮应隐藏")
         }
+        let close = panel.standardWindowButton(.closeButton)
+        XCTAssertNotNil(close)
+        XCTAssertFalse(close?.isHidden ?? true, "把手栏显示系统关闭按钮")
+        XCTAssertTrue(panel.styleMask.contains(.closable))
         XCTAssertEqual(panel.titleVisibility, .hidden)
         XCTAssertTrue(panel.titlebarAppearsTransparent)
         XCTAssertTrue(panel.isMovableByWindowBackground, "标题栏隐藏后靠背景拖动")
@@ -196,7 +200,6 @@ final class PanelControllerTests: XCTestCase {
         let viewModel = PanelViewModel(
             engine: engine,
             settings: settings,
-            clipboardMonitor: ClipboardMonitor(initialChangeCount: 100, now: { Date() }),
             pasteboard: NSPasteboard.withUniqueName(),
             now: { Date() },
             collapse: {}
@@ -262,7 +265,7 @@ final class PanelControllerTests: XCTestCase {
 final class PanelHintTextTests: XCTestCase {
 
     func testUnpinnedMatchesStateTable() {
-        XCTAssertEqual(AppText.panelHint(for: .empty), "⌘V 粘贴 · Esc 收起")
+        XCTAssertEqual(AppText.panelHint(for: .empty), "⌘V 粘贴 · ⌘Y 历史 · Esc 收起")
         XCTAssertEqual(AppText.panelHint(for: .composing), "↩ 翻译 · ⇧↩ 换行")
         XCTAssertEqual(AppText.panelHint(for: .translating), "⌘1–4 切换语言 · Esc 收起")
         XCTAssertEqual(AppText.panelHint(for: .finished), "↩ 复制并收起 · ⌘C 复制 · ⌘R 重译")
