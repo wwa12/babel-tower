@@ -1,3 +1,5 @@
+import Foundation
+
 /// 面向用户的文案集中存放（不散落字符串字面量）。
 /// 本地化（简中 / 繁中 / 日 / 英）基础设施随 F10 设置任务落地。
 enum AppText {
@@ -41,19 +43,50 @@ enum AppText {
     static let panelRetry = "重试"
     static let panelGoSettings = "去设置"
 
+    // MARK: 顶部把手栏
+
+    static let appDisplayName = "巴别塔"
+
+    /// 把手栏标题：「巴别塔 0.1.0」（版本取自 App 自身）。
+    static var panelTitle: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        return [appDisplayName, version].compactMap { $0 }.joined(separator: " ")
+    }
+
+    // MARK: 翻译历史
+
+    static let panelHistoryTooltip = "翻译历史（⌘Y）"
+    static let panelHistoryEmpty = "还没有翻译历史"
+    static let panelHistoryImageOnly = "[图片]"
+    static let panelHintHistory = "↑↓ 选择 · ↩ 载入 · Esc 返回"
+    static let panelHistoryAccessibilityLabel = "翻译历史"
+
+    /// 历史条目里的图片数量标注。
+    static func panelHistoryImageCount(_ count: Int) -> String {
+        "\(count) 张图片"
+    }
+
+    static let settingsSaveHistory = "保存翻译历史"
+    static let settingsSaveHistoryNote = "只保存在本机，最多占用 500 MB，超出时自动删除最旧的记录。"
+    static let settingsClearHistory = "清空历史…"
+    static let settingsClearHistoryConfirmTitle = "清空全部翻译历史？"
+    static let settingsClearHistoryConfirmMessage = "所有记录与图片将被删除，无法恢复。"
+    static let settingsClearHistoryConfirmButton = "清空"
+    static let settingsCancel = "取消"
+
     // MARK: 图钉固定
 
     static let panelPinTooltip = "固定浮窗（固定后点击外部与 Esc 不收起，⌥T 仍可收起）"
     static let panelUnpinTooltip = "取消固定"
 
-    static let panelHintEmpty = "⌘V 粘贴 · Esc 收起"
+    static let panelHintEmpty = "⌘V 粘贴 · ↩ 翻译 · ⌘Y 历史 · Esc 收起"
     static let panelHintComposing = "↩ 翻译 · ⇧↩ 换行"
     static let panelHintTranslating = "⌘1–4 切换语言 · Esc 收起"
     static let panelHintFinished = "↩ 复制并收起 · ⌘C 复制 · ⌘R 重译"
     static let panelHintFailed = "⌘R 重试 · Esc 收起"
 
     /// 固定态提示：标注"固定中"，不出现"收起"字样（固定时 Esc 与 ↩ 都不再收起）。
-    static let panelHintPinnedEmpty = "⌘V 粘贴 · 固定中"
+    static let panelHintPinnedEmpty = "⌘V 粘贴 · ↩ 翻译 · ⌘Y 历史 · 固定中"
     static let panelHintPinnedComposing = "↩ 翻译 · ⇧↩ 换行 · 固定中"
     static let panelHintPinnedTranslating = "⌘1–4 切换语言 · 固定中"
     static let panelHintPinnedFinished = "↩ 复制 · ⌘C 复制 · ⌘R 重译 · 固定中"

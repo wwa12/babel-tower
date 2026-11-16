@@ -25,7 +25,6 @@ final class AuditFixTests: XCTestCase {
         try settings.setAPIKey("虚构测试Key", forPresetID: "openai")
         viewModel = PanelViewModel(
             engine: engine, settings: settings,
-            clipboardMonitor: ClipboardMonitor(initialChangeCount: 100, now: { Date() }),
             pasteboard: pasteboard, now: { Date() }, collapse: {},
             imageProcessingMode: .synchronous)
         panelDefaults = UserDefaults(suiteName: "test.audit.panel.\(UUID().uuidString)")!
@@ -88,6 +87,7 @@ final class AuditFixTests: XCTestCase {
     func testShortOutputWithoutMarkerIsShownAsTranslation() async {
         StubURLProtocol.streamHandler = { _ in [Self.chunk("你好"), Self.done] }
         viewModel.handlePaste("Hello")
+        viewModel.submit()   // 回车才翻译
         await waitForTerminalPhase()
         XCTAssertEqual(viewModel.phase, .finished)
         XCTAssertEqual(viewModel.resultText, "你好")
@@ -97,6 +97,7 @@ final class AuditFixTests: XCTestCase {
     func testShortOutputWithoutMarkerSplitAcrossChunksIsShown() async {
         StubURLProtocol.streamHandler = { _ in [Self.chunk("Hel"), Self.chunk("lo!"), Self.done] }
         viewModel.handlePaste("你好！")
+        viewModel.submit()   // 回车才翻译
         await waitForTerminalPhase()
         XCTAssertEqual(viewModel.resultText, "Hello!")
     }
@@ -108,6 +109,7 @@ final class AuditFixTests: XCTestCase {
             .immediate(Data(#"data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}"#.utf8) + Data("\n\n".utf8)),
         ] }
         viewModel.handlePaste("Hello")
+        viewModel.submit()   // 回车才翻译
         await waitForTerminalPhase()
         XCTAssertEqual(viewModel.phase, .failed(.modelRefused))
         XCTAssertEqual(viewModel.resultText, "")
@@ -117,19 +119,23 @@ final class AuditFixTests: XCTestCase {
     func testHalfWrittenMarkerIsNotShownAsTranslation() async {
         StubURLProtocol.streamHandler = { _ in [Self.chunk("[[zh-Ha"), Self.done] }
         viewModel.handlePaste("Hello")
+        viewModel.submit()   // 回车才翻译
         await waitForTerminalPhase()
         XCTAssertEqual(viewModel.resultText, "")
     }
 
-    // MARK: 缺陷 6：纯图片输入切换语言要立即重译
+    // MARK: 缺陷 6（回车翻译后）：纯图片输入切换语言，↩ 按新语言重译（不是复制旧译文）
 
-    func testSwitchingLanguageWithImageOnlyRetranslates() async {
+    func testSwitchingLanguageWithImageOnlyRetranslatesOnEnter() async {
         StubURLProtocol.streamHandler = { _ in [Self.chunk("[[zh-Hans]]\n图里的字"), Self.done] }
         viewModel.handlePasteImage(data: pngData())
+        viewModel.submit()
         await waitForTerminalPhase()
         let requestsBefore = StubURLProtocol.capturedRequests.count
         viewModel.setTargetMode(.manual(.ja))
-        XCTAssertEqual(viewModel.phase, .translating, "切换后应立即进入重译")
+        XCTAssertEqual(viewModel.phase, .composing, "切换只改选择，等 ↩")
+        viewModel.submit()
+        XCTAssertEqual(viewModel.phase, .translating, "↩ 按新语言重译")
         await waitForTerminalPhase()
         XCTAssertGreaterThan(StubURLProtocol.capturedRequests.count, requestsBefore)
     }
@@ -215,6 +221,7 @@ final class AuditFixTests: XCTestCase {
             Self.done,
         ] }
         viewModel.handlePaste("First part, second part")
+        viewModel.submit()   // 回车才翻译
         try await Task.sleep(nanoseconds: 300_000_000)
         let contentView = try XCTUnwrap(controller.panelForTesting.contentView)
         let streaming = try XCTUnwrap(

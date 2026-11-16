@@ -5,6 +5,9 @@ import KeyboardShortcuts
 /// 服务区复用 ServiceSettingsForm；快捷键用 KeyboardShortcuts.Recorder（自带冲突检测）。
 struct SettingsView: View {
     @EnvironmentObject private var appSettings: AppSettings
+    /// 翻译历史（清空用）；nil 时不显示清空按钮
+    var history: HistoryStore?
+    @State private var confirmingClearHistory = false
 
     var body: some View {
         Form {
@@ -55,6 +58,18 @@ struct SettingsView: View {
 
             Section(AppText.settingsGeneralSection) {
                 Toggle(AppText.settingsLaunchAtLogin, isOn: $appSettings.launchAtLogin)
+                Toggle(AppText.settingsSaveHistory, isOn: $appSettings.saveHistory)
+                HStack {
+                    Text(AppText.settingsSaveHistoryNote)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if history != nil {
+                        Button(AppText.settingsClearHistory) {
+                            confirmingClearHistory = true
+                        }
+                    }
+                }
                 Text(AppText.settingsUILanguageNote)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -62,6 +77,14 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 520, minHeight: 560)
+        .alert(AppText.settingsClearHistoryConfirmTitle, isPresented: $confirmingClearHistory) {
+            Button(AppText.settingsClearHistoryConfirmButton, role: .destructive) {
+                history?.clearAll()
+            }
+            Button(AppText.settingsCancel, role: .cancel) {}
+        } message: {
+            Text(AppText.settingsClearHistoryConfirmMessage)
+        }
     }
 }
 

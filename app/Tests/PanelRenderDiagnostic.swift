@@ -20,7 +20,6 @@ final class PanelRenderDiagnostic: XCTestCase {
         let viewModel = PanelViewModel(
             engine: TranslationEngine(client: OpenAICompatibleClient(session: URLSession(configuration: config))),
             settings: settings,
-            clipboardMonitor: ClipboardMonitor(initialChangeCount: 0, now: { Date() }),
             pasteboard: NSPasteboard.withUniqueName(),
             now: { Date() },
             collapse: {}

@@ -202,7 +202,6 @@ final class ReviewBatch1Tests: XCTestCase {
         return PanelViewModel(
             engine: TranslationEngine(client: OpenAICompatibleClient(session: URLSession(configuration: config))),
             settings: settings,
-            clipboardMonitor: ClipboardMonitor(initialChangeCount: 100, now: { Date() }),
             pasteboard: NSPasteboard.withUniqueName(), now: { Date() }, collapse: collapse,
             imageProcessingMode: .background)
     }
@@ -216,16 +215,18 @@ final class ReviewBatch1Tests: XCTestCase {
         return NSBitmapImageRep(cgImage: context.makeImage()!).representation(using: .png, properties: [:])!
     }
 
+    /// 处理中按 ↩：处理完统一发一次请求。
     func testBackgroundProcessingShowsPendingThenTranslatesOnce() async throws {
         let viewModel = try makeBackgroundViewModel()
         viewModel.handlePasteImage(data: pngData(width: 30))
         XCTAssertEqual(viewModel.pendingImageCount, 1, "粘贴后立即显示占位，不等处理完")
         XCTAssertTrue(viewModel.images.isEmpty)
+        viewModel.submit()
         XCTAssertNotEqual(viewModel.phase, .translating, "处理完之前不发请求")
         await viewModel.waitForPendingImages()
         XCTAssertEqual(viewModel.pendingImageCount, 0)
         XCTAssertEqual(viewModel.images.count, 1)
-        XCTAssertEqual(viewModel.phase, .translating, "处理完立即翻译")
+        XCTAssertEqual(viewModel.phase, .translating, "处理完兑现 ↩")
         try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertEqual(StubURLProtocol.capturedRequests.count, 1, "只发一次请求")
     }
@@ -236,6 +237,7 @@ final class ReviewBatch1Tests: XCTestCase {
         viewModel.handlePasteImage(data: pngData(width: 11))
         viewModel.handlePasteImage(data: pngData(width: 22))
         viewModel.handlePasteImage(data: pngData(width: 33))
+        viewModel.submit()
         await viewModel.waitForPendingImages()
         try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertEqual(StubURLProtocol.capturedRequests.count, 1, "中途不发缺图的请求")
@@ -257,16 +259,27 @@ final class ReviewBatch1Tests: XCTestCase {
         XCTAssertEqual(viewModel.phase, .translating)
     }
 
-    /// 图片处理中按 ⌘2，图片解码失败：语言切换意图不丢，照样按文字翻译。
-    func testLanguageSwitchWhileProcessingSurvivesUndecodableImage() async throws {
+    /// 图片处理中切 ⌘2 再按 ↩，图片解码失败：↩ 的意图不丢，照样按文字与新语言翻译。
+    func testEnterWhileProcessingSurvivesUndecodableImage() async throws {
         let viewModel = try makeBackgroundViewModel()
         viewModel.inputText = "Hello"
         viewModel.handlePasteImage(data: Data("坏数据".utf8))
         viewModel.setTargetMode(.manual(.zhHant))
+        viewModel.submit()
         await viewModel.waitForPendingImages()
         XCTAssertEqual(viewModel.imageNotice, AppText.panelImageUndecodable)
-        XCTAssertEqual(viewModel.phase, .translating, "切语言的意图在图片处理完后兑现")
+        XCTAssertEqual(viewModel.phase, .translating, "↩ 的意图在图片处理完后兑现")
         XCTAssertEqual(viewModel.targetMode, .manual(.zhHant))
+    }
+
+    /// 只粘贴图片不按 ↩：处理完也不发请求。
+    func testBackgroundImageWithoutEnterSendsNothing() async throws {
+        let viewModel = try makeBackgroundViewModel()
+        viewModel.handlePasteImage(data: pngData(width: 30))
+        await viewModel.waitForPendingImages()
+        XCTAssertEqual(viewModel.phase, .composing)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(StubURLProtocol.capturedRequests.count, 0)
     }
 
     /// 只有占位图时粘贴文字：按"已有内容"处理——不立即发纯文字请求，不重置手动语言。
@@ -277,6 +290,7 @@ final class ReviewBatch1Tests: XCTestCase {
         viewModel.handlePaste("配图说明")
         XCTAssertEqual(viewModel.targetMode, .manual(.ja), "手动语言不被重置")
         XCTAssertNotEqual(viewModel.phase, .translating, "不先发纯文字请求")
+        viewModel.submit()
         await viewModel.waitForPendingImages()
         try await Task.sleep(nanoseconds: 300_000_000)
         XCTAssertEqual(StubURLProtocol.capturedRequests.count, 1)

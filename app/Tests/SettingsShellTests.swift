@@ -146,7 +146,6 @@ final class RefusalAndEmptyResultTests: XCTestCase {
         StubURLProtocol.resetStreamingState()
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
-        let monitor = ClipboardMonitor(initialChangeCount: 0, now: { Date() })
         let settings = ModelServiceSettings(
             keyStore: InMemoryAPIKeyStore(),
             defaults: UserDefaults(suiteName: "test.emptyResult.\(UUID().uuidString)")!
@@ -154,7 +153,7 @@ final class RefusalAndEmptyResultTests: XCTestCase {
         try settings.setAPIKey("虚构测试Key", forPresetID: "openai")
         return PanelViewModel(
             engine: TranslationEngine(client: OpenAICompatibleClient(session: URLSession(configuration: config))),
-            settings: settings, clipboardMonitor: monitor,
+            settings: settings,
             pasteboard: NSPasteboard.withUniqueName(), now: { Date() }, collapse: {}
         )
     }
@@ -266,7 +265,6 @@ private enum PanelViewModelStubForSettings {
         return PanelViewModel(
             engine: TranslationEngine(client: OpenAICompatibleClient(session: URLSession(configuration: config))),
             settings: settings,
-            clipboardMonitor: ClipboardMonitor(initialChangeCount: 0, now: { Date() }),
             pasteboard: NSPasteboard.withUniqueName(),
             now: { Date() },
             collapse: {},

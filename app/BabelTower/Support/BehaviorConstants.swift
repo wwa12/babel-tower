@@ -9,9 +9,6 @@ enum BehaviorConstants {
     /// 自定义提示词上限 10,000 字符（与文字输入上限一致）。
     static let maxPromptCharacters = 10_000
 
-    /// 剪贴板新鲜度窗口 60 秒。
-    static let clipboardFreshnessInterval: TimeInterval = 60
-
     /// 收起后内容保留 10 分钟。
     static let contentRetentionInterval: TimeInterval = 60 * 10
 

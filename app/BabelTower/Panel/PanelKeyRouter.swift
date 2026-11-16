@@ -37,6 +37,12 @@ enum PanelKeyRouter {
         case setTargetMode(TargetMode)
         /// ⌘,：打开设置
         case openSettings
+        /// ⌘Y：打开 / 关闭历史列表（列表中 Esc 同样关闭）
+        case toggleHistory
+        /// 历史列表中 ↑↓：移动选中项
+        case moveHistorySelection(Int)
+        /// 历史列表中 ↩：载入选中项
+        case confirmHistorySelection
         /// 交给系统 / 输入法 / 插入文本
         case passthrough
     }
@@ -48,7 +54,8 @@ enum PanelKeyRouter {
                        hasResultSelection: Bool,
                        hasInputSelection: Bool,
                        hasInputText: Bool = true,
-                       isPinned: Bool = false) -> Action {
+                       isPinned: Bool = false,
+                       isShowingHistory: Bool = false) -> Action {
         // 组字未确认：一切按键先给输入法
         if hasMarkedText {
             return .passthrough
@@ -57,6 +64,27 @@ enum PanelKeyRouter {
         // 按位判定而非严格相等：大写锁等附加标志位不应让快捷键失灵
         let hasCommand = !modifiers.intersection(.command).isEmpty
         let hasOtherModifiers = !modifiers.intersection([.control, .option, .shift]).isEmpty
+
+        // 历史列表显示中：只响应列表按键、⌘Y、⌘,；其余不作用于背后的翻译内容
+        if isShowingHistory {
+            if hasCommand && !hasOtherModifiers {
+                switch keyCode {
+                case 16: return .toggleHistory   // Y
+                case 43: return .openSettings    // ,
+                default: return .passthrough
+                }
+            }
+            guard modifiers.intersection([.command, .control, .option, .shift]).isEmpty else {
+                return .passthrough
+            }
+            switch keyCode {
+            case 126: return .moveHistorySelection(-1)   // ↑
+            case 125: return .moveHistorySelection(1)    // ↓
+            case 36, 76: return .confirmHistorySelection  // ↩ / 小键盘回车
+            case 53: return .toggleHistory               // Esc：关闭列表（不收起浮窗）
+            default: return .passthrough
+            }
+        }
 
         if hasCommand && !hasOtherModifiers {
             switch keyCode {
@@ -86,6 +114,8 @@ enum PanelKeyRouter {
                 return .setTargetMode(.automatic)
             case 43:  // ,
                 return .openSettings
+            case 16:  // Y
+                return .toggleHistory
             default:
                 return .passthrough
             }

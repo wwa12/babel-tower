@@ -1,7 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import ImageIO
 
-/// 浮窗正式内容：语言栏、输入区、结果区、提示栏。
+/// 浮窗正式内容：顶部把手栏、语言栏、输入区、结果区（或历史列表）、提示栏。
 /// 高度随内容在 120–640 伸缩；字号输入与译文 14pt、提示栏 11pt。
 struct PanelContentView: View {
     @ObservedObject var viewModel: PanelViewModel
@@ -13,10 +14,14 @@ struct PanelContentView: View {
         VStack(spacing: 0) {
             languageBar
             Divider()
-            inputArea
-            if showsResultArea {
-                Divider()
-                resultArea
+            if viewModel.isShowingHistory, let history = viewModel.history {
+                HistoryListView(store: history, viewModel: viewModel)
+            } else {
+                inputArea
+                if showsResultArea {
+                    Divider()
+                    resultArea
+                }
             }
             Divider()
             hintBar
@@ -29,6 +34,41 @@ struct PanelContentView: View {
         .frame(minHeight: BehaviorConstants.panelMinHeight,
                maxHeight: BehaviorConstants.panelMaxHeight, alignment: .top)
         .background(VisualEffectBackground())
+        // 把手栏画在系统标题栏的位置（内容区上方、窗口白色底上）。
+        // 用上移的叠加层而不是让内容忽略安全区：后者会让窗口高度把标题栏算两遍，底部多出空白
+        .overlay(alignment: .top) {
+            titleBar.offset(y: -Self.titleBarHeight)
+        }
+        .onChange(of: viewModel.isShowingHistory) { _, showing in
+            // 历史列表关闭（返回 / 载入）后输入框重新出现：焦点放回输入区
+            guard !showing else { return }
+            DispatchQueue.main.async {
+                appState.panelController.focusInputArea()
+            }
+        }
+    }
+
+    // MARK: 顶部把手栏（系统关闭按钮 + 居中的图标、名称、版本；底色为窗口白色，可拖动）
+
+    /// 系统标题栏高度（随系统版本不同，按窗口样式实算）
+    static let titleBarHeight: CGFloat = {
+        let content = NSRect(x: 0, y: 0, width: 100, height: 100)
+        return NSWindow.frameRect(forContentRect: content, styleMask: [.titled]).height - content.height
+    }()
+
+    private var titleBar: some View {
+        HStack(spacing: 6) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 16, height: 16)
+            Text(AppText.panelTitle)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        // 图标、名称、版本在把手栏居中（左侧是系统关闭按钮）
+        .frame(height: Self.titleBarHeight)
+        .frame(maxWidth: .infinity)
+        .allowsHitTesting(false)   // 点击与拖动交给窗口标题栏
     }
 
     // MARK: 语言栏（自动/简/繁/日/EN，译入语言高亮）
@@ -41,6 +81,9 @@ struct PanelContentView: View {
             languageButton(title: AppText.panelLanguageShort(.ja), language: .ja)
             languageButton(title: AppText.panelLanguageShort(.en), language: .en)
             Spacer(minLength: 8)
+            if viewModel.history != nil {
+                historyButton
+            }
             pinButton
             Button {
                 appState.panelController.showSettingsWindow()
@@ -53,6 +96,18 @@ struct PanelContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// 时钟：打开 / 关闭翻译历史（同 ⌘Y）。
+    private var historyButton: some View {
+        Button {
+            viewModel.toggleHistory()
+        } label: {
+            Image(systemName: "clock.arrow.circlepath")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(viewModel.isShowingHistory ? Color.accentColor : Color.secondary)
+        .help(AppText.panelHistoryTooltip)
     }
 
     /// 图钉：固定浮窗——固定时点击外部/Esc 不收起、↩ 复制不收起。
@@ -302,7 +357,161 @@ struct PanelContentView: View {
     }
 
     private var hintText: String {
-        AppText.panelHint(for: viewModel.phase, isPinned: viewModel.isPinned)
+        if viewModel.isShowingHistory {
+            return AppText.panelHintHistory
+        }
+        return AppText.panelHint(for: viewModel.phase, isPinned: viewModel.isPinned)
+    }
+}
+
+/// 翻译历史列表（浮窗内替换输入区与结果区）：时间倒序，↑↓ 选择、↩ 或单击载入。
+private struct HistoryListView: View {
+    @ObservedObject var store: HistoryStore
+    @ObservedObject var viewModel: PanelViewModel
+
+    static let rowHeight: CGFloat = 58
+    /// 列表高度上限：与把手栏、语言栏、提示栏相加不超过 640
+    static let maxListHeight: CGFloat = 480
+
+    var body: some View {
+        if store.entries.isEmpty {
+            Text(AppText.panelHistoryEmpty)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 80)
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(store.entries) { entry in
+                            HistoryRow(entry: entry,
+                                       store: store,
+                                       isSelected: entry.id == viewModel.historySelectionID)
+                                .id(entry.id)
+                                .contentShape(Rectangle())
+                                // 选中只跟键盘走：悬停改选中会在 ↑↓ 自动滚动时把选中项抢到鼠标下那行
+                                .onTapGesture { viewModel.loadHistoryEntry(entry) }
+                        }
+                    }
+                }
+                // 固有高度驱动窗口：滚动视图没有理想高度，按条数给定
+                .frame(height: min(CGFloat(store.entries.count) * Self.rowHeight, Self.maxListHeight))
+                .onChange(of: viewModel.historySelectionID) { _, id in
+                    guard let id else { return }
+                    proxy.scrollTo(id)
+                }
+                .accessibilityLabel(AppText.panelHistoryAccessibilityLabel)
+            }
+        }
+    }
+}
+
+private struct HistoryRow: View {
+    let entry: HistoryEntry
+    let store: HistoryStore
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let first = entry.images.first {
+                HistoryThumbnail(url: store.imageURL(first))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(Self.timeText(entry.date))
+                    Text("→ " + AppText.panelLanguageShort(entry.targetLanguage))
+                    if entry.images.count > 0 {
+                        Text(AppText.panelHistoryImageCount(entry.images.count))
+                    }
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                Text(Self.firstLine(entry.inputText).isEmpty ? AppText.panelHistoryImageOnly : Self.firstLine(entry.inputText))
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                Text(Self.firstLine(entry.resultText))
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: HistoryListView.rowHeight)
+        .background(isSelected ? Color.accentColor.opacity(0.18) : .clear)
+    }
+
+    static func firstLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline).first.map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    private static let dateTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M月d日 HH:mm"
+        return formatter
+    }()
+
+    static func timeText(_ date: Date) -> String {
+        Calendar.current.isDateInToday(date) ? timeFormatter.string(from: date) : dateTimeFormatter.string(from: date)
+    }
+}
+
+/// 历史条目的图片缩略图：后台按缩略尺寸解码（不解整张 2000px 原图）并缓存，滚动不卡、内存不涨。
+private struct HistoryThumbnail: View {
+    let url: URL
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Color.secondary.opacity(0.15)
+            }
+        }
+        .frame(width: 40, height: 40)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .task(id: url) {
+            image = await HistoryThumbnailCache.thumbnail(for: url)
+        }
+    }
+}
+
+/// 历史缩略图缓存（只存 80px 小图，条数有上限）。
+@MainActor
+enum HistoryThumbnailCache {
+    private static let cache: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 200
+        return cache
+    }()
+
+    static func thumbnail(for url: URL) async -> NSImage? {
+        if let cached = cache.object(forKey: url as NSURL) {
+            return cached
+        }
+        let cgImage = await Task.detached(priority: .utility) { () -> CGImage? in
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 80,
+            ]
+            return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        }.value
+        guard let cgImage else { return nil }
+        let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        cache.setObject(image, forKey: url as NSURL)
+        return image
     }
 }
 

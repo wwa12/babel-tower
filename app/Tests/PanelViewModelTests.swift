@@ -8,7 +8,6 @@ import AppKit
 final class PanelViewModelTests: XCTestCase {
 
     private var viewModel: PanelViewModel!
-    private var monitor: ClipboardMonitor!
     private var pasteboard: NSPasteboard!
     private var settings: ModelServiceSettings!
     private var collapsed = false
@@ -19,7 +18,6 @@ final class PanelViewModelTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
         let engine = TranslationEngine(client: OpenAICompatibleClient(session: URLSession(configuration: config)))
-        monitor = ClipboardMonitor(initialChangeCount: 100, now: { [self] in now })
         pasteboard = NSPasteboard.withUniqueName()
         settings = ModelServiceSettings(
             keyStore: InMemoryAPIKeyStore(),
@@ -30,7 +28,6 @@ final class PanelViewModelTests: XCTestCase {
         viewModel = PanelViewModel(
             engine: engine,
             settings: settings,
-            clipboardMonitor: monitor,
             pasteboard: pasteboard,
             now: { [self] in now },
             collapse: { [self] in collapsed = true },
@@ -78,54 +75,39 @@ final class PanelViewModelTests: XCTestCase {
         cancellable.cancel()
     }
 
-    // MARK: 剪贴板带入
+    // MARK: 呼出不读剪贴板（回车翻译）
 
-    func testFreshClipboardTextBroughtInAndTranslates() async {
+    /// 剪贴板里有刚复制的文字：呼出不带入、不翻译。
+    func testShowDoesNotBringInClipboardText() async throws {
         stubSSE()
-        pasteboard.setString("待翻译的新文字", forType: .string)
-        monitor.update(changeCount: 101)   // 60 秒内的新变化
+        pasteboard.setString("刚复制的文字", forType: .string)
 
         viewModel.panelWillShow()
-        XCTAssertEqual(viewModel.inputText, "待翻译的新文字")
-        await waitForTerminal()
-        XCTAssertEqual(viewModel.phase, .finished)
-        XCTAssertEqual(viewModel.resultText, "你好")
-        XCTAssertEqual(viewModel.marker, .language(.zhHans))
-    }
-
-    func testBroughtInContentNotConsumedTwice() async {
-        stubSSE()
-        pasteboard.setString("只带入一次", forType: .string)
-        let snapshot = monitor.update(changeCount: 101)!
-
-        viewModel.panelWillShow()
-        XCTAssertTrue(monitor.isFreshContent(snapshot) == false, "带入后应标记 consumed")
-
-        now.addTimeInterval(5)
-        viewModel.panelDidCollapse()
-        now.addTimeInterval(5)
-        viewModel.panelWillShow()   // 同一份内容不再带入，但 10 分钟内保留上轮显示
-        XCTAssertEqual(viewModel.inputText, "只带入一次")
-    }
-
-    func testStaleClipboardNotBroughtIn() {
-        pasteboard.setString("过期的文字", forType: .string)
-        monitor.update(changeCount: 101)
-        now.addTimeInterval(BehaviorConstants.clipboardFreshnessInterval + 1)
-
-        viewModel.panelWillShow()
-        XCTAssertEqual(viewModel.inputText, "", "超过 60 秒不带入")
+        XCTAssertEqual(viewModel.inputText, "", "呼出不读剪贴板")
         XCTAssertEqual(viewModel.phase, .empty)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(StubURLProtocol.capturedRequests.count, 0, "呼出不发请求")
     }
 
-    /// 新鲜剪贴板是无法解码的位图：不当文字带入，也加不进图片，输入区保持为空。
-    func testFreshImageClipboardSkippedInTextRound() {
+    /// 剪贴板里有图片：呼出同样不带入。
+    func testShowDoesNotBringInClipboardImage() {
         pasteboard.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
-        monitor.update(changeCount: 101)
-
         viewModel.panelWillShow()
-        XCTAssertEqual(viewModel.inputText, "", "图片不按文字带入")
+        XCTAssertTrue(viewModel.images.isEmpty)
         XCTAssertEqual(viewModel.phase, .empty)
+    }
+
+    /// 10 分钟保留不变：收起后再呼出仍显示上一轮。
+    func testShowKeepsPreviousRoundWithinRetention() async {
+        stubSSE()
+        viewModel.inputText = "上一轮"
+        viewModel.submit()
+        await waitForTerminal()
+        viewModel.panelDidCollapse()
+        now.addTimeInterval(60)
+        viewModel.panelWillShow()
+        XCTAssertEqual(viewModel.inputText, "上一轮")
+        XCTAssertEqual(viewModel.phase, .finished)
     }
 
     // MARK: 内容保留 10 分钟
@@ -188,21 +170,25 @@ final class PanelViewModelTests: XCTestCase {
         XCTAssertTrue(bodies.contains { $0.contains("第二版改了") }, "重译应使用新输入")
     }
 
-    func testPasteIntoEmptyInputTranslatesImmediately() async {
+    /// 向空输入区粘贴文字：只填入，不翻译；↩ 才翻译。
+    func testPasteIntoEmptyInputWaitsForEnter() async throws {
         stubSSE()
         viewModel.handlePaste("粘贴的文字")
         XCTAssertEqual(viewModel.inputText, "粘贴的文字")
+        XCTAssertEqual(viewModel.phase, .composing)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(StubURLProtocol.capturedRequests.count, 0, "粘贴不发请求")
+
+        viewModel.submit()
         await waitForTerminal()
         XCTAssertEqual(viewModel.resultText, "你好")
     }
 
-    /// 空区粘贴视为新一轮：手动目标复位（与 ⌘N / 呼出带入一致）。
-    func testPasteIntoEmptyResetsManualTarget() async {
-        stubSSE()
+    /// 先选语言再粘贴：手动目标保留（粘贴不再复位目标语言）。
+    func testPasteIntoEmptyKeepsManualTarget() {
         viewModel.setTargetMode(.manual(.ja))
-        viewModel.handlePaste("粘贴开新轮")
-        XCTAssertEqual(viewModel.targetMode, .automatic)
-        await waitForTerminal()
+        viewModel.handlePaste("先选日语再粘贴")
+        XCTAssertEqual(viewModel.targetMode, .manual(.ja))
     }
 
     func testPasteWithExistingInputOnlyAppends() {
@@ -232,10 +218,15 @@ final class PanelViewModelTests: XCTestCase {
 
     // MARK: 目标语言
 
-    func testTargetSwitchRetranslatesImmediately() async {
+    /// 切换目标语言只改选择，不发请求；↩ 才按新语言翻译。
+    func testTargetSwitchWaitsForEnter() async throws {
         stubSSE(marker: "[[ja]]", body: "こんにちは")
         viewModel.inputText = "切语言"
         viewModel.setTargetMode(.manual(.ja))
+        XCTAssertEqual(viewModel.phase, .composing)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(StubURLProtocol.capturedRequests.count, 0, "切语言不发请求")
+        viewModel.submit()
         await waitForTerminal()
         XCTAssertEqual(viewModel.targetMode, .manual(.ja))
         XCTAssertEqual(viewModel.marker, .language(.ja))
@@ -267,6 +258,7 @@ final class PanelViewModelTests: XCTestCase {
         stubSSE()
         viewModel.inputText = "本轮文字"
         viewModel.setTargetMode(.manual(.en))
+        viewModel.submit()
         await waitForTerminal()
         viewModel.submit()   // 完成后 ↩ → 复制收起
         XCTAssertTrue(collapsed)
@@ -410,5 +402,48 @@ final class PanelViewModelTests: XCTestCase {
         viewModel.retranslate()
         try await Task.sleep(nanoseconds: 300_000_000)   // 等重译请求真正发出
         XCTAssertGreaterThan(StubURLProtocol.capturedRequests.count, requestsBefore)
+    }
+}
+
+/// 回车翻译：完成后切换语言，↩ 应按新语言重译，而不是复制旧译文收起。
+@MainActor
+final class EnterToTranslateTests: XCTestCase {
+
+    func testEnterAfterLanguageSwitchRetranslatesInsteadOfCopying() async throws {
+        StubURLProtocol.resetStreamingState()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        let settings = ModelServiceSettings(
+            keyStore: InMemoryAPIKeyStore(),
+            defaults: UserDefaults(suiteName: "test.enter.\(UUID().uuidString)")!
+        )
+        try settings.setAPIKey("虚构测试Key", forPresetID: "openai")
+        var collapsed = false
+        let pasteboard = NSPasteboard.withUniqueName()
+        let viewModel = PanelViewModel(
+            engine: TranslationEngine(client: OpenAICompatibleClient(session: URLSession(configuration: config))),
+            settings: settings,
+            pasteboard: pasteboard,
+            collapse: { collapsed = true },
+            imageProcessingMode: .synchronous
+        )
+        StubURLProtocol.streamHandler = { _ in [
+            .immediate(Data(#"data: {"choices":[{"delta":{"content":"[[en]]\nHello"}}]}"#.utf8 + Data("\n\n".utf8))),
+            .immediate(Data("data: [DONE]\n\n".utf8)),
+        ] }
+        viewModel.inputText = "你好"
+        viewModel.submit()
+        for _ in 0..<40 where viewModel.phase != .finished {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(viewModel.phase, .finished)
+
+        viewModel.setTargetMode(.manual(.ja))
+        XCTAssertEqual(viewModel.phase, .composing, "切语言后回到待发送")
+        XCTAssertEqual(AppText.panelHint(for: viewModel.phase), AppText.panelHintComposing)
+        viewModel.submit()
+        XCTAssertFalse(collapsed, "切语言后 ↩ 是重译，不是复制收起")
+        XCTAssertEqual(viewModel.phase, .translating)
+        StubURLProtocol.resetStreamingState()
     }
 }

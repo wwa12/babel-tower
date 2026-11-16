@@ -187,7 +187,8 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
             hasResultSelection: hasSelection && focus == .result,
             hasInputSelection: hasSelection && focus == .input,
             hasInputText: !viewModel.inputText.isEmpty,
-            isPinned: viewModel.isPinned
+            isPinned: viewModel.isPinned,
+            isShowingHistory: viewModel.isShowingHistory
         )
 
         switch action {
@@ -204,16 +205,15 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
             viewModel.copyResult(selection: textView.flatMap(Self.selectedText(of:)), andCollapse: false)
             return true
         case .pasteFromClipboard:
-            // 已有内容时粘贴文字：交给输入框自己插入——落在光标处、替换选区、可撤销，
-            // 不自动翻译（"只追加，等待 ↩"；原实现一律拼到末尾）
-            if focus == .input, let textView, viewModel.hasInputContent,
+            // 粘贴文字：交给输入框自己插入——落在光标处、替换选区、可撤销，不翻译（↩ 才翻译）
+            if focus == .input, let textView,
                case .plainText(let text) = ClipboardParser.parse(pasteboardForInput) {
                 // insertText 是输入法通道，撤销会和之前的打字合并；先断开，粘贴单独一步撤销
                 textView.breakUndoCoalescing()
                 textView.insertText(text, replacementRange: textView.selectedRange())
                 return true
             }
-            // 其余：空区粘贴文字立即翻译；图片带入并立即重译；空剪贴板消费但无反应
+            // 其余：图片放进输入区（不翻译）；焦点不在输入框时文字追加到末尾；空剪贴板消费但无反应
             viewModel.handlePasteboardContent(pasteboardForInput)
             return true
         case .deleteLastImage:
@@ -231,8 +231,26 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
         case .openSettings:
             showSettingsWindow()
             return true
+        case .toggleHistory:
+            viewModel.toggleHistory()
+            return true
+        case .moveHistorySelection(let offset):
+            viewModel.moveHistorySelection(by: offset)
+            return true
+        case .confirmHistorySelection:
+            viewModel.confirmHistorySelection()
+            return true
         case .passthrough:
             return false
+        }
+    }
+
+    /// 把键盘焦点放回输入区（历史列表关闭后输入框重新出现时调用）。
+    func focusInputArea() {
+        guard isPanelVisible, let contentView = panel.contentView else { return }
+        contentView.layoutSubtreeIfNeeded()
+        if let inputTextView = Self.firstEditableTextView(in: contentView) {
+            panel.makeFirstResponder(inputTextView)
         }
     }
 
@@ -391,6 +409,14 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
         handleOutsideClick(at: screenPoint)
     }
     #endif
+
+    /// 浮窗把手栏的关闭按钮 = 收起（与 ⌥T 相同：收起并解除固定、焦点还回原应用）。
+    /// 浮窗常驻只做显隐，不允许真正关闭。
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === panel else { return true }
+        hidePanel()
+        return false
+    }
 
     /// 设置窗口关闭：释放 SwiftUI 内容（重开时重建），压常驻内存。
     func windowWillClose(_ notification: Notification) {
