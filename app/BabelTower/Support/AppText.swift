@@ -47,7 +47,7 @@ enum AppText {
 
     static let appDisplayName = "巴别塔"
 
-    /// 把手栏标题：「巴别塔 0.1.0」（版本取自 App 自身）。
+    /// 把手栏标题：「巴别塔 版本号」（版本取自 App 自身）。
     static var panelTitle: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         return [appDisplayName, version].compactMap { $0 }.joined(separator: " ")
