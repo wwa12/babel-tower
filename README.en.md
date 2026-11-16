@@ -1,5 +1,7 @@
 # Babel Tower · 巴别塔
 
+<p align="center"><img src="app/BabelTower/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="128" alt="Babel Tower icon"></p>
+
 [简体中文](README.md) | English
 
 A Mac translation panel you summon with a hotkey. Copy some text or take a screenshot, press ⌥T, and the translation appears; press Return and it goes to your clipboard and the panel closes.
@@ -26,6 +28,16 @@ Babel Tower is deliberately narrow. It does not do: translating a selection in p
 - No Accessibility, Screen Recording or Input Monitoring permission is requested; a fresh install shows no permission prompts.
 - Your API key is stored only in the macOS Keychain on your Mac. It is never written to a file or synced.
 - Content is sent only to the model service you configure. No usage data is collected.
+
+## Download
+
+Grab the latest `.dmg` from [Releases](https://github.com/wwa12/babel-tower/releases/latest), open it and drag 巴别塔 into your Applications folder. The same package runs on Apple silicon and Intel.
+
+The package is **not notarized by Apple** yet, so macOS will say it can't verify the developer the first time you open it. Go to System Settings → Privacy & Security, scroll to the bottom and click "Open Anyway". Or run this in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/巴别塔.app
+```
 
 ## Requirements
 

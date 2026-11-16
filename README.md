@@ -1,5 +1,7 @@
 # 巴别塔 · Babel Tower
 
+<p align="center"><img src="app/BabelTower/Assets.xcassets/AppIcon.appiconset/icon_128x128@2x.png" width="128" alt="Babel Tower icon"></p>
+
 简体中文 | [English](README.en.md)
 
 用快捷键呼出的 Mac 翻译浮窗：复制一段文字或截一张图，按 ⌥T 出译文；再按回车，译文进剪贴板，浮窗收起。
@@ -26,6 +28,16 @@
 - 不申请辅助功能、屏幕录制、输入监控等任何系统权限，全新安装不会出现权限弹窗。
 - API Key 只保存在本机系统钥匙串，不写入任何文件，也不随设置同步。
 - 待翻译内容只发送给你配置的模型服务，不收集任何使用数据。
+
+## 下载安装
+
+到 [Releases](https://github.com/wwa12/babel-tower/releases/latest) 下载最新的 `.dmg`，打开后把「巴别塔」拖进「应用程序」文件夹。同一个安装包同时支持 Apple 芯片和 Intel。
+
+安装包目前**没有经过 Apple 公证**，第一次打开时 macOS 会提示无法验证开发者。到「系统设置 → 隐私与安全性」拉到底部，点「仍要打开」即可；也可以在终端执行：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/巴别塔.app
+```
 
 ## 系统要求
 
