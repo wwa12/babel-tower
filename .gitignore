@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Xcode / Swift
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+.build/
+.swiftpm/xcode/
+
+# 密钥与签名材料——绝不进仓库
+*.p12
+*.p8
+AuthKey_*.p8
+*.mobileprovision
+*.cer
+*.csr
+env/
+.env*
+secrets/
+
+# 本地实验与临时产物
+tmp/
+*.local.*
+
+
+# 覆盖率原始数据（测试运行产物）
+*.profraw
