@@ -6,7 +6,7 @@
 
 ## 报告问题
 
-用 [Bug 模板](https://github.com/wwa12/babel-mac/issues/new/choose) 提 Issue，写清：
+用 [Bug 模板](https://github.com/wwa12/babel-tower/issues/new/choose) 提 Issue，写清：
 
 - macOS 版本、Apple 芯片还是 Intel；
 - 用的模型服务和模型名（**不要贴 API Key**）；

@@ -6,7 +6,7 @@ Thanks for helping build Babel Tower. Issues and pull requests are welcome in En
 
 ## Reporting bugs
 
-Open an issue with the [bug template](https://github.com/wwa12/babel-mac/issues/new/choose) and include:
+Open an issue with the [bug template](https://github.com/wwa12/babel-tower/issues/new/choose) and include:
 
 - your macOS version, and whether you're on Apple silicon or Intel;
 - the model service and model name you use (**never paste your API key**);

@@ -48,11 +48,11 @@ xattr -dr com.apple.quarantine /Applications/巴别塔.app
 ## Building from source
 
 ```bash
-git clone https://github.com/wwa12/babel-mac.git
+git clone https://github.com/wwa12/babel-tower.git
 ```
 
 ```bash
-cd babel-mac/app && open 巴别塔.xcodeproj
+cd babel-tower/app && open 巴别塔.xcodeproj
 ```
 
 Pick the "巴别塔" scheme in Xcode and press ⌘R. Or build from the command line inside `app/`:
