@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import ImageIO
 
 /// 浮窗正式内容：顶部把手栏、语言栏、输入区、结果区（或历史列表）、提示栏。
 /// 高度随内容在 120–640 伸缩；字号输入与译文 14pt、提示栏 11pt。
@@ -388,10 +389,8 @@ private struct HistoryListView: View {
                                        isSelected: entry.id == viewModel.historySelectionID)
                                 .id(entry.id)
                                 .contentShape(Rectangle())
+                                // 选中只跟键盘走：悬停改选中会在 ↑↓ 自动滚动时把选中项抢到鼠标下那行
                                 .onTapGesture { viewModel.loadHistoryEntry(entry) }
-                                .onHover { inside in
-                                    if inside { viewModel.historySelectionID = entry.id }
-                                }
                         }
                     }
                 }
@@ -464,13 +463,14 @@ private struct HistoryRow: View {
     }
 }
 
-/// 历史条目的图片缩略图（按需从本机文件读取）。
+/// 历史条目的图片缩略图：后台按缩略尺寸解码（不解整张 2000px 原图）并缓存，滚动不卡、内存不涨。
 private struct HistoryThumbnail: View {
     let url: URL
+    @State private var image: NSImage?
 
     var body: some View {
         Group {
-            if let image = NSImage(contentsOf: url) {
+            if let image {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -480,6 +480,38 @@ private struct HistoryThumbnail: View {
         }
         .frame(width: 40, height: 40)
         .clipShape(RoundedRectangle(cornerRadius: 5))
+        .task(id: url) {
+            image = await HistoryThumbnailCache.thumbnail(for: url)
+        }
+    }
+}
+
+/// 历史缩略图缓存（只存 80px 小图，条数有上限）。
+@MainActor
+enum HistoryThumbnailCache {
+    private static let cache: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 200
+        return cache
+    }()
+
+    static func thumbnail(for url: URL) async -> NSImage? {
+        if let cached = cache.object(forKey: url as NSURL) {
+            return cached
+        }
+        let cgImage = await Task.detached(priority: .utility) { () -> CGImage? in
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 80,
+            ]
+            return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        }.value
+        guard let cgImage else { return nil }
+        let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        cache.setObject(image, forKey: url as NSURL)
+        return image
     }
 }
 

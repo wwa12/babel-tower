@@ -355,3 +355,145 @@ final class PanelCloseButtonTests: XCTestCase {
         }
     }
 }
+
+/// 独立审查发现项的回归测试。
+@MainActor
+final class HistoryReviewFixTests: XCTestCase {
+
+    private var directory: URL!
+
+    override func setUp() async throws {
+        StubURLProtocol.resetStreamingState()
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("巴别塔历史测试-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    override func tearDown() async throws {
+        StubURLProtocol.resetStreamingState()
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func record(_ text: String, target: TranslationLanguage = .zhHans,
+                        manual: TranslationLanguage? = nil) -> HistoryRecord {
+        HistoryRecord(inputText: text, images: [], resultText: "译文", targetLanguage: target,
+                      manualTarget: manual, marker: .language(target))
+    }
+
+    /// 启动加载完成前新增同一内容：磁盘上的旧记录也被替换，不留两条。
+    func testDuplicateAddedDuringLoadDoesNotSurviveRestart() async {
+        let first = HistoryStore(directory: directory)
+        first.add(record("同一句"))
+        await first.waitForPendingWork()
+
+        let second = HistoryStore(directory: directory)
+        second.add(record("同一句"))   // 加载尚未合并
+        await second.waitForPendingWork()
+        await second.waitForPendingWork()
+        XCTAssertEqual(second.entries.count, 1)
+
+        let third = HistoryStore(directory: directory)
+        await third.waitForPendingWork()
+        XCTAssertEqual(third.entries.count, 1, "重启后也只有一条")
+    }
+
+    /// 加载期间清空：列表不出现已删除的记录。
+    func testClearDuringLoadLeavesNoGhostEntries() async {
+        let first = HistoryStore(directory: directory)
+        for text in ["一", "二", "三"] { first.add(record(text)) }
+        await first.waitForPendingWork()
+
+        let second = HistoryStore(directory: directory)
+        second.clearAll()
+        await second.waitForPendingWork()
+        await second.waitForPendingWork()
+        XCTAssertTrue(second.entries.isEmpty, "已清空的记录不能被加载结果放回列表")
+    }
+
+    /// 同一内容按实际译入语言判定：自动译成英语与手动选英语是同一条。
+    func testSameActualTargetIsSameContent() {
+        let store = HistoryStore(directory: directory)
+        store.add(record("你好", target: .en, manual: nil))
+        store.add(record("你好", target: .en, manual: .en))
+        XCTAssertEqual(store.entries.count, 1)
+    }
+
+    private func makeViewModel(mode: ImageProcessingMode = .synchronous,
+                               collapse: @escaping () -> Void = {}) throws -> PanelViewModel {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        let settings = ModelServiceSettings(
+            keyStore: InMemoryAPIKeyStore(),
+            defaults: UserDefaults(suiteName: "test.reviewfix.\(UUID().uuidString)")!
+        )
+        try settings.setAPIKey("虚构测试Key", forPresetID: "openai")
+        return PanelViewModel(
+            engine: TranslationEngine(client: OpenAICompatibleClient(session: URLSession(configuration: config))),
+            settings: settings, pasteboard: NSPasteboard.withUniqueName(),
+            collapse: collapse, imageProcessingMode: mode)
+    }
+
+    private func stubDelayed(_ content: String, delay: TimeInterval) {
+        let json = String(data: try! JSONEncoder().encode(["choices": [["delta": ["content": content]]]]),
+                          encoding: .utf8)!
+        StubURLProtocol.streamHandler = { _ in [
+            StubURLProtocol.ScheduledChunk(data: Data("data: \(json)\n\n".utf8), delayBefore: delay),
+            .immediate(Data("data: [DONE]\n\n".utf8)),
+        ] }
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<60 where !condition() {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    /// 翻译中切语言，旧请求完成后：不显示"复制并收起"、不高亮旧语言，↩ 按新语言重译。
+    func testLanguageSwitchDuringTranslationEndsInComposing() async throws {
+        var collapsed = false
+        let viewModel = try makeViewModel(collapse: { collapsed = true })
+        stubDelayed("[[en]]\nHello", delay: 0.3)
+        viewModel.inputText = "你好"
+        viewModel.submit()
+        XCTAssertEqual(viewModel.phase, .translating)
+        viewModel.setTargetMode(.manual(.ja))
+        await waitUntil { viewModel.phase != .translating }
+        XCTAssertEqual(viewModel.phase, .composing, "旧语言的译文不是当前内容的译文")
+        XCTAssertEqual(viewModel.resultText, "Hello", "译文照常显示")
+        XCTAssertNil(viewModel.highlightedLanguage, "不高亮旧语言")
+        viewModel.submit()
+        XCTAssertFalse(collapsed)
+        XCTAssertEqual(viewModel.phase, .translating, "↩ 按新语言重译")
+    }
+
+    private func finishedViewModelWithPendingBadImage(collapse: @escaping () -> Void) async throws -> PanelViewModel {
+        let viewModel = try makeViewModel(mode: .background, collapse: collapse)
+        stubDelayed("[[zh-Hans]]\n你好", delay: 0)
+        viewModel.inputText = "Hello"
+        viewModel.submit()
+        await waitUntil { viewModel.phase == .finished }
+        XCTAssertEqual(viewModel.phase, .finished)
+        viewModel.handlePasteImage(data: Data("坏数据".utf8))
+        return viewModel
+    }
+
+    /// 完成后拖入坏图并按 ↩：内容实际没变，恢复完成态，↩ 复制而不是重发请求。
+    func testUndecodableImageAfterFinishRestoresFinishedAndEnterCopies() async throws {
+        var collapsed = false
+        let viewModel = try await finishedViewModelWithPendingBadImage(collapse: { collapsed = true })
+        let requestsBefore = StubURLProtocol.capturedRequests.count
+        viewModel.submit()
+        await viewModel.waitForPendingImages()
+        XCTAssertEqual(viewModel.imageNotice, AppText.panelImageUndecodable)
+        XCTAssertTrue(collapsed, "内容没变：↩ 复制并收起")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(StubURLProtocol.capturedRequests.count, requestsBefore, "不重发请求")
+    }
+
+    /// 同样情形下按 ⌘R：仍然重译。
+    func testRetranslateIntentSurvivesUndecodableImage() async throws {
+        let viewModel = try await finishedViewModelWithPendingBadImage(collapse: {})
+        viewModel.retranslate()
+        await viewModel.waitForPendingImages()
+        XCTAssertEqual(viewModel.phase, .translating, "⌘R 一定重译")
+    }
+}

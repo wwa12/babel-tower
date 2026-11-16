@@ -265,7 +265,7 @@ final class PanelControllerTests: XCTestCase {
 final class PanelHintTextTests: XCTestCase {
 
     func testUnpinnedMatchesStateTable() {
-        XCTAssertEqual(AppText.panelHint(for: .empty), "⌘V 粘贴 · ⌘Y 历史 · Esc 收起")
+        XCTAssertEqual(AppText.panelHint(for: .empty), "⌘V 粘贴 · ↩ 翻译 · ⌘Y 历史 · Esc 收起")
         XCTAssertEqual(AppText.panelHint(for: .composing), "↩ 翻译 · ⇧↩ 换行")
         XCTAssertEqual(AppText.panelHint(for: .translating), "⌘1–4 切换语言 · Esc 收起")
         XCTAssertEqual(AppText.panelHint(for: .finished), "↩ 复制并收起 · ⌘C 复制 · ⌘R 重译")

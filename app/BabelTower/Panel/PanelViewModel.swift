@@ -116,6 +116,10 @@ final class PanelViewModel: ObservableObject {
     /// 图片处理期间收到了"要翻译"的意图（↩ / ⌘R / 切语言 / 新图追加）：
     /// 全部批次处理完后统一发一次请求，意图不丢、也不发缺图的请求
     private var translateWhenImagesReady = false
+    /// 新图入队前本轮已完成时记下的标记：图片全部处理失败 / 被拒（内容实际没变）时恢复完成态
+    private var finishedMarkerBeforeImages: MarkerParser.Marker?
+    /// 处理期间收到的是 ⌘R（一定重译），而不只是 ↩（内容没变时 ↩ = 复制）
+    private var retranslateWhenImagesReady = false
 
     private var hasPendingImages: Bool { pendingImageCount > 0 }
 
@@ -215,6 +219,7 @@ final class PanelViewModel: ObservableObject {
     func retranslate() {
         if hasPendingImages {
             translateWhenImagesReady = true
+            retranslateWhenImagesReady = true
             return
         }
         guard !inputText.isEmpty || !images.isEmpty else { return }
@@ -465,8 +470,11 @@ final class PanelViewModel: ObservableObject {
         case .synchronous:
             finishImageBatch(batch.map { $0.process() })
         case .background:
+            if phase == .finished, finishedMarkerBeforeImages == nil {
+                finishedMarkerBeforeImages = marker ?? .passthrough
+            }
             pendingImageCount += batch.count
-            imagesDidChangeByUser()           // 内容已变：完成态回到待发送，↩ 不会复制旧译文
+            imagesDidChangeByUser()           // 处理中：完成态先回到待发送（提示栏不显示"复制"）
             let generation = imageBatchGeneration
             let previous = imageBatchChain
             imageBatchChain = Task { [weak self] in
@@ -509,10 +517,23 @@ final class PanelViewModel: ObservableObject {
         case .synchronous:
             break
         case .background:
+            guard !hasPendingImages else { return }
+            // 图片全部处理失败 / 被拒、文字也没改：内容与已完成的一轮相同，恢复完成态
+            if let restoredMarker = finishedMarkerBeforeImages, phase == .composing,
+               isRoundContentUnchanged, !resultText.isEmpty {
+                phase = .finished
+                marker = restoredMarker
+            }
+            finishedMarkerBeforeImages = nil
             // 全部批次处理完才发一次请求；处理期间的翻译意图（↩ / ⌘R）在这里兑现
-            guard !hasPendingImages, translateWhenImagesReady else { return }
+            guard translateWhenImagesReady else { return }
             translateWhenImagesReady = false
-            if hasInputContent, !isInputOverLimit {
+            let forceRetranslate = retranslateWhenImagesReady
+            retranslateWhenImagesReady = false
+            if phase == .finished, !forceRetranslate {
+                // 内容没变：↩ 按"完成后 ↩"处理（复制），不重复发请求
+                submit()
+            } else if hasInputContent, !isInputOverLimit {
                 // 发起翻译会清掉图片提示；本批产生的提示（无法读取 / 超张数）要留给用户看到
                 let batchNotice = imageNotice
                 startTranslation()
@@ -535,11 +556,18 @@ final class PanelViewModel: ObservableObject {
         case .delta(let text):
             resultText += text
         case .finished(let finishedMarker, let body):
-            marker = finishedMarker
             resultText = body
-            phase = .finished
             lastRoundActivityAt = now()
             saveRoundToHistory(marker: finishedMarker, body: body)
+            if isRoundContentUnchanged {
+                marker = finishedMarker
+                phase = .finished
+            } else {
+                // 翻译中改了文字 / 图片 / 目标语言：译文照常显示，但这一轮不是当前内容的译文——
+                // 回到待发送（提示 ↩ 翻译、不高亮旧语言），↩ 按当前内容重译
+                marker = nil
+                phase = hasInputContent ? .composing : .empty
+            }
         case .failed(let failure):
             phase = .failed(failure)
             lastRoundActivityAt = now()
@@ -644,6 +672,8 @@ final class PanelViewModel: ObservableObject {
         imageBatchGeneration += 1
         pendingImageCount = 0
         translateWhenImagesReady = false
+        retranslateWhenImagesReady = false
+        finishedMarkerBeforeImages = nil
         imageBatchChain = nil
     }
 

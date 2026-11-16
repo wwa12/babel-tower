@@ -79,14 +79,14 @@ enum AppText {
     static let panelPinTooltip = "固定浮窗（固定后点击外部与 Esc 不收起，⌥T 仍可收起）"
     static let panelUnpinTooltip = "取消固定"
 
-    static let panelHintEmpty = "⌘V 粘贴 · ⌘Y 历史 · Esc 收起"
+    static let panelHintEmpty = "⌘V 粘贴 · ↩ 翻译 · ⌘Y 历史 · Esc 收起"
     static let panelHintComposing = "↩ 翻译 · ⇧↩ 换行"
     static let panelHintTranslating = "⌘1–4 切换语言 · Esc 收起"
     static let panelHintFinished = "↩ 复制并收起 · ⌘C 复制 · ⌘R 重译"
     static let panelHintFailed = "⌘R 重试 · Esc 收起"
 
     /// 固定态提示：标注"固定中"，不出现"收起"字样（固定时 Esc 与 ↩ 都不再收起）。
-    static let panelHintPinnedEmpty = "⌘V 粘贴 · ⌘Y 历史 · 固定中"
+    static let panelHintPinnedEmpty = "⌘V 粘贴 · ↩ 翻译 · ⌘Y 历史 · 固定中"
     static let panelHintPinnedComposing = "↩ 翻译 · ⇧↩ 换行 · 固定中"
     static let panelHintPinnedTranslating = "⌘1–4 切换语言 · 固定中"
     static let panelHintPinnedFinished = "↩ 复制 · ⌘C 复制 · ⌘R 重译 · 固定中"

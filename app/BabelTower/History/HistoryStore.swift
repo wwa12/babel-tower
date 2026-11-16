@@ -23,7 +23,7 @@ struct HistoryEntry: Codable, Identifiable, Equatable, Sendable {
     let manualTarget: TranslationLanguage?
     /// 首行标记："same" / "passthrough" / 语言代码（载入时恢复横幅与高亮）
     let marker: String
-    /// 内容指纹（文字 + 图片 + 目标设置）：同一内容再次翻译只保留最新一条
+    /// 内容指纹（文字 + 图片 + 实际译入语言）：同一内容再次翻译只保留最新一条
     let contentKey: String
 
     var targetMode: TargetMode { manualTarget.map(TargetMode.manual) ?? .automatic }
@@ -44,14 +44,14 @@ struct HistoryEntry: Codable, Identifiable, Equatable, Sendable {
         }
     }
 
-    static func contentKey(text: String, images: [Data], manualTarget: TranslationLanguage?) -> String {
+    static func contentKey(text: String, images: [Data], targetLanguage: TranslationLanguage) -> String {
         var hasher = SHA256()
         hasher.update(data: Data(text.utf8))
         for image in images {
             hasher.update(data: Data([0x1F]))
             hasher.update(data: Data(SHA256.hash(data: image)))
         }
-        hasher.update(data: Data(("|" + (manualTarget?.rawValue ?? "auto")).utf8))
+        hasher.update(data: Data(("|" + targetLanguage.rawValue).utf8))
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }
@@ -87,6 +87,8 @@ final class HistoryStore: ObservableObject {
     private let disk: HistoryDisk
     private let queue = DispatchQueue(label: "babeltower.history", qos: .utility)
     private let now: () -> Date
+    /// 清空代际：清空后，清空前发起的加载结果作废（否则已删的记录会被合并回列表）
+    private var generation = 0
 
     init(directory: URL = HistoryStore.defaultDirectory,
          limitBytes: Int64 = HistoryStore.defaultLimitBytes,
@@ -108,15 +110,19 @@ final class HistoryStore: ObservableObject {
 
     private func load() {
         let disk = self.disk
+        let loadGeneration = generation
         queue.async {
             let loaded = disk.loadAll()
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                // 加载期间新存的条目（尚未在磁盘列表里）保留
-                let loadedIDs = Set(loaded.map(\.id))
-                let merged = loaded + self.entries.filter { !loadedIDs.contains($0.id) }
-                self.entries = merged.sorted { $0.date > $1.date }
                 self.isLoaded = true
+                guard loadGeneration == self.generation else { return }   // 加载期间被清空
+                // 加载期间新存的条目（尚未在磁盘列表里）保留；同一内容只留最新一条
+                let loadedIDs = Set(loaded.map(\.id))
+                let merged = (loaded + self.entries.filter { !loadedIDs.contains($0.id) })
+                    .sorted { $0.date > $1.date }
+                var seenKeys = Set<String>()
+                self.entries = merged.filter { seenKeys.insert($0.contentKey).inserted }
             }
         }
     }
@@ -139,30 +145,28 @@ final class HistoryStore: ObservableObject {
             marker: HistoryEntry.markerString(record.marker),
             contentKey: HistoryEntry.contentKey(text: record.inputText,
                                                 images: record.images.map(\.data),
-                                                manualTarget: record.manualTarget)
+                                                targetLanguage: record.targetLanguage)
         )
-        let duplicates = entries.filter { $0.contentKey == entry.contentKey }
         entries.removeAll { $0.contentKey == entry.contentKey }
         entries.insert(entry, at: 0)
 
         let imageData = record.images.map(\.data)
         let disk = self.disk
         queue.async {
-            for duplicate in duplicates {
-                disk.remove(duplicate)
-            }
+            // 去重在磁盘索引上做：启动加载完成前主线程列表还不全，只靠它会漏删旧的重复记录
+            let replaced = disk.removeEntries(withContentKey: entry.contentKey)
             disk.write(entry, imageData: imageData)
-            let pruned = disk.pruneIfNeeded()
-            guard !pruned.isEmpty else { return }
+            let removed = Set(replaced + disk.pruneIfNeeded())
+            guard !removed.isEmpty else { return }
             Task { @MainActor [weak self] in
-                let prunedIDs = Set(pruned)
-                self?.entries.removeAll { prunedIDs.contains($0.id) }
+                self?.entries.removeAll { removed.contains($0.id) }
             }
         }
     }
 
     /// 清空全部历史（记录与图片文件）。
     func clearAll() {
+        generation += 1
         entries = []
         let disk = self.disk
         queue.async {
@@ -275,6 +279,15 @@ private final class HistoryDisk: @unchecked Sendable {
             totalBytes -= existing.bytes
         }
         deleteFiles(of: entry)
+    }
+
+    /// 删除磁盘上同一内容的旧记录，返回被删条目。
+    func removeEntries(withContentKey key: String) -> [UUID] {
+        let matches = index.values.filter { $0.entry.contentKey == key }.map(\.entry)
+        for entry in matches {
+            remove(entry)
+        }
+        return matches.map(\.id)
     }
 
     func removeAll() {
