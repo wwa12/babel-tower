@@ -11,7 +11,10 @@ final class MenuBarController {
     func install(panelController: PanelController) {
         self.panelController = panelController
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "character.book.closed", accessibilityDescription: AppText.settingsWindowTitle)
+        let icon = NSImage(named: "MenuBarIcon")
+        icon?.isTemplate = true
+        icon?.accessibilityDescription = AppText.settingsWindowTitle
+        item.button?.image = icon
         let menu = NSMenu()
 
         let openItem = NSMenuItem(title: AppText.menuOpenPanel, action: #selector(openPanel), keyEquivalent: "")
