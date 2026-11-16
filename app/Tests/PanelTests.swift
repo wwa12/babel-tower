@@ -216,6 +216,18 @@ final class PanelControllerTests: XCTestCase {
         XCTAssertFalse(pair.controller.isPanelVisible, "非固定：点击外部收起（现状）")
     }
 
+    /// 点把手栏（标题栏）：系统把按下事件连同浮窗窗口号送进全局监听，坐标是窗口坐标——不能当外部点击收起。
+    func testTitlebarClickDoesNotCollapse() {
+        let pair = makeControllerWithViewModel()
+        pair.controller.showPanel()
+        let panel = pair.controller.panelForTesting
+        // 窗口坐标（相对浮窗左下角）落在屏幕坐标系里浮窗之外——正是误判的情形
+        pair.controller.simulateOutsideClickForTesting(at: NSPoint(x: -10_000, y: -10_000),
+                                                       windowNumber: panel.windowNumber)
+        XCTAssertTrue(pair.controller.isPanelVisible, "点自己的标题栏不收起")
+        pair.controller.hidePanel()
+    }
+
     func testOutsideClickIgnoredWhenPinned() {
         let pair = makeControllerWithViewModel()
         pair.controller.showPanel()

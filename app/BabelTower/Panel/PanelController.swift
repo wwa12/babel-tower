@@ -281,15 +281,21 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
     private func installOutsideClickMonitor() {
         guard outsideClickMonitor == nil else { return }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            // 点浮窗标题栏（把手栏）时，按下由系统窗口服务处理拖动，事件也会进全局监听，
+            // 且坐标是相对浮窗的窗口坐标而不是屏幕坐标——直接拿来判断会误判成"点了外面"而收起。
+            // 所以：带着浮窗窗口号的事件一律不算外部点击；位置统一取屏幕坐标的鼠标位置
+            let windowNumber = event.windowNumber
+            let screenPoint = NSEvent.mouseLocation
             Task { @MainActor in
-                self?.handleOutsideClick(at: event.locationInWindow)
+                self?.handleOutsideClick(at: screenPoint, windowNumber: windowNumber)
             }
         }
     }
 
     /// 点击面板外收起；固定状态放行。坐标为屏幕坐标，与窗口 frame 同系。
-    private func handleOutsideClick(at screenPoint: NSPoint) {
-        guard isPanelVisible, !panel.frame.contains(screenPoint) else { return }
+    private func handleOutsideClick(at screenPoint: NSPoint, windowNumber: Int = 0) {
+        guard isPanelVisible, windowNumber != panel.windowNumber,
+              !panel.frame.contains(screenPoint) else { return }
         guard viewModel?.isPinned != true else { return }
         hidePanel()
     }
@@ -405,8 +411,8 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
 
     /// 测试钩子：模拟点击面板外一点（外部点击收起/固定放行用例；
     /// 真实全局监听不可注入）。
-    func simulateOutsideClickForTesting(at screenPoint: NSPoint) {
-        handleOutsideClick(at: screenPoint)
+    func simulateOutsideClickForTesting(at screenPoint: NSPoint, windowNumber: Int = 0) {
+        handleOutsideClick(at: screenPoint, windowNumber: windowNumber)
     }
     #endif
 

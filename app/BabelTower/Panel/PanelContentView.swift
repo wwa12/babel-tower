@@ -60,10 +60,10 @@ struct PanelContentView: View {
         HStack(spacing: 6) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
-                .frame(width: 16, height: 16)
+                .frame(width: 18, height: 18)
             Text(AppText.panelTitle)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.primary)
         }
         // 图标、名称、版本在把手栏居中（左侧是系统关闭按钮）
         .frame(height: Self.titleBarHeight)
