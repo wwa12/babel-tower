@@ -15,7 +15,9 @@ final class AppState: ObservableObject {
     let modelServiceSettings = ModelServiceSettings()
     let appSettings = AppSettings()
     let panelController: PanelController
-    let translationEngine = TranslationEngine()
+    /// 模型请求日志（测试宿主不写真实日志目录）
+    let requestLog: RequestLog? = AppState.isRunningUnitTests ? nil : RequestLog()
+    let translationEngine: TranslationEngine
     private let menuBarController = MenuBarController()
     private let onboardingController = OnboardingController()
     private(set) var panelViewModel: PanelViewModel?
@@ -30,7 +32,9 @@ final class AppState: ObservableObject {
     init() {
         let controller = PanelController()
         panelController = controller
+        translationEngine = TranslationEngine(requestLog: requestLog)
         guard !Self.isRunningUnitTests else { return }
+        requestLog?.pruneExpired()
 
         // 首次启动写入默认快捷键 ⌥T；已设置过（含用户自定义）则不动
         if KeyboardShortcuts.getShortcut(for: .togglePanel) == nil {
@@ -73,7 +77,7 @@ final class AppState: ObservableObject {
                 settingsContent: { [weak self] in
                     guard let self else { return NSHostingView(rootView: AnyView(EmptyView())) }
                     return NSHostingView(rootView: AnyView(
-                        SettingsView(history: self.historyStore)
+                        SettingsView(history: self.historyStore, requestLog: self.requestLog)
                             .environmentObject(self.appSettings)
                             .environmentObject(self.modelServiceSettings)
                     ))

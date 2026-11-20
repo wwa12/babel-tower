@@ -39,7 +39,7 @@ final class TranslationFailureTests: XCTestCase {
         XCTAssertTrue(TranslationFailure.endpointNotFound(detail: nil).userMessage.contains("404"))
         XCTAssertTrue(TranslationFailure.serviceError(status: 503, detail: nil).userMessage.contains("503"))
         XCTAssertTrue(TranslationFailure.networkUnavailable.userMessage.contains("网络"))
-        XCTAssertTrue(TranslationFailure.firstTokenTimeout.userMessage.contains("15"))
+        XCTAssertTrue(TranslationFailure.firstTokenTimeout.userMessage.contains("25"))
         XCTAssertTrue(TranslationFailure.streamInterrupted(detail: nil).userMessage.contains("中断"))
     }
 

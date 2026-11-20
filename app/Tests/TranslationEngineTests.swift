@@ -304,7 +304,7 @@ final class TranslationEngineTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(StubURLProtocol.stopLoadingCount, 1, "旧请求应被真正取消")
     }
 
-    // MARK: 首字超时（首字超过 15 秒；测试注入短超时）
+    // MARK: 首字超时（首字超过 25 秒；测试注入短超时）
 
     func testFirstTokenTimeoutFails() async {
         engine = TranslationEngine(client: client, firstTokenTimeout: 0.15)

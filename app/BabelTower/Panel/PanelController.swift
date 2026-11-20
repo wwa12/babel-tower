@@ -75,7 +75,7 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
         guard !isPanelVisible else { return }
         // 记录呼出前的应用，收起时归还焦点
         applicationBeforeReveal = NSWorkspace.shared.frontmostApplication
-        // 剪贴板带入 / 保留期判定在显示前完成
+        // 显示前清空上一轮
         viewModel?.panelWillShow()
 
         let currentSize = panel.frame.size
@@ -134,7 +134,7 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
     func hidePanel() {
         guard isPanelVisible else { return }
         removeOutsideClickMonitor()
-        viewModel?.panelDidCollapse()   // 内容保留锚定（收起不清空）
+        viewModel?.panelDidCollapse()
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = Self.fadeDuration
             panel.animator().alphaValue = 0

@@ -2,7 +2,7 @@ import XCTest
 import AppKit
 @testable import BabelTower
 
-/// 浮窗视图模型状态机：剪贴板带入、保留期、触发规则、
+/// 浮窗视图模型状态机：剪贴板带入、呼出清空、触发规则、
 /// 目标语言切换、流式标记、复制路径、失败相位。全部走 mock SSE 引擎与注入时钟。
 @MainActor
 final class PanelViewModelTests: XCTestCase {
@@ -41,9 +41,9 @@ final class PanelViewModelTests: XCTestCase {
 
     // MARK: 工具：把一轮翻译跑完
 
-    private func stubSSE(marker: String = "[[zh-Hans]]", body: String = "你好") {
+    private func stubSSE(marker: String = "[[zh-Hans]]", body: String = "你好", delay: TimeInterval = 0) {
         StubURLProtocol.streamHandler = { _ in [
-            Self.contentChunk("\(marker)\n\(body)"),
+            StubURLProtocol.ScheduledChunk(data: Self.contentChunk("\(marker)\n\(body)").data, delayBefore: delay),
             Self.doneChunk,
         ] }
     }
@@ -97,44 +97,45 @@ final class PanelViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.phase, .empty)
     }
 
-    /// 10 分钟保留不变：收起后再呼出仍显示上一轮。
-    func testShowKeepsPreviousRoundWithinRetention() async {
-        stubSSE()
-        viewModel.inputText = "上一轮"
-        viewModel.submit()
-        await waitForTerminal()
-        viewModel.panelDidCollapse()
-        now.addTimeInterval(60)
-        viewModel.panelWillShow()
-        XCTAssertEqual(viewModel.inputText, "上一轮")
-        XCTAssertEqual(viewModel.phase, .finished)
-    }
+    // MARK: 每次呼出都是空的
 
-    // MARK: 内容保留 10 分钟
-
-    func testContentKeptWithin10MinutesAfterCollapse() async {
+    /// 收起后马上再呼出：上一轮不保留，输入区、结果区都为空。
+    func testShowAfterCollapseIsAlwaysEmpty() async {
         stubSSE()
         viewModel.inputText = "上一轮文字"
         viewModel.submit()
         await waitForTerminal()
 
         viewModel.panelDidCollapse()
-        now.addTimeInterval(BehaviorConstants.contentRetentionInterval - 10)
-        viewModel.panelWillShow()
-        XCTAssertEqual(viewModel.inputText, "上一轮文字")
-        XCTAssertEqual(viewModel.phase, .finished)
-    }
-
-    func testContentClearedAfter10Minutes() async {
-        stubSSE()
-        viewModel.inputText = "上一轮文字"
-        viewModel.submit()
-        await waitForTerminal()
-
-        viewModel.panelDidCollapse()
-        now.addTimeInterval(BehaviorConstants.contentRetentionInterval + 1)
         viewModel.panelWillShow()
         XCTAssertEqual(viewModel.inputText, "")
+        XCTAssertEqual(viewModel.resultText, "")
+        XCTAssertEqual(viewModel.phase, .empty)
+    }
+
+    /// 翻译中收起再呼出：请求取消，迟到的译文不会出现在新一轮里。
+    func testShowCancelsInFlightTranslation() async throws {
+        stubSSE(delay: 0.3)
+        viewModel.inputText = "还在翻译"
+        viewModel.submit()
+        XCTAssertEqual(viewModel.phase, .translating)
+        // 等请求真正发出，再收起、呼出
+        let deadline = Date().addingTimeInterval(3)
+        while StubURLProtocol.capturedRequests.isEmpty, Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertFalse(StubURLProtocol.capturedRequests.isEmpty, "请求应已发出")
+
+        viewModel.panelDidCollapse()
+        viewModel.panelWillShow()
+        XCTAssertEqual(viewModel.phase, .empty)
+        // 正向信号：网络请求被真正取消
+        while StubURLProtocol.stopLoadingCount == 0, Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertGreaterThanOrEqual(StubURLProtocol.stopLoadingCount, 1, "请求应被取消")
+        try await Task.sleep(nanoseconds: 500_000_000)   // 越过原定出字时间
+        XCTAssertEqual(viewModel.resultText, "")
         XCTAssertEqual(viewModel.phase, .empty)
     }
 
@@ -343,10 +344,10 @@ final class PanelViewModelTests: XCTestCase {
         viewModel.copyResult(selection: nil, andCollapse: false)
         viewModel.panelDidCollapse()
         // 下次呼出：自己的译文不该被当新鲜内容带入（监测里 ownWrite 生效由 ClipboardMonitorTests 覆盖，
-        // 这里钉住 viewModel 调用了 noteOwnWrite——通过行为验证：呼出后输入未被覆盖）
+        // 这里通过行为验证：呼出后输入为空、译文未被带入）
         pasteboard.setString("你好", forType: .string)   // 已是译文，无新变化计数
         viewModel.panelWillShow()
-        XCTAssertEqual(viewModel.inputText, "复制后", "自己的译文不覆盖输入")
+        XCTAssertEqual(viewModel.inputText, "", "呼出为空，自己的译文不被带入")
     }
 
     // MARK: 标记与失败

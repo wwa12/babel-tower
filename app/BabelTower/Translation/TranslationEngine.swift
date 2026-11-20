@@ -15,14 +15,17 @@ enum TranslationEvent: Equatable, Sendable {
 
 /// 翻译引擎：
 /// - 同一时间只保留一个请求，新请求取消旧请求；被取代的旧请求不再上报任何事件；
-/// - 首字（首个内容增量）15 秒超时，超时取消请求并报错；
+/// - 首字（首个内容增量）25 秒超时，超时取消请求并报错；
 /// - 标记感知缓冲：接 MarkerParser，判定前缓冲、判定后直通；
-/// - SSE 解析在后台任务执行，事件经 AsyncStream 回主线程。
+/// - SSE 解析在后台任务执行，事件经 AsyncStream 回主线程；
+/// - 每个请求结束时（成功 / 超时 / 失败 / 取消）写一条请求日志（注入了日志时）。
 @MainActor
 final class TranslationEngine {
 
     private let client: OpenAICompatibleClient
     private let firstTokenTimeout: TimeInterval
+    /// 模型请求日志；nil = 不记录（测试默认）
+    private let requestLog: RequestLog?
 
     /// 代际计数：每次新翻译 +1。旧任务用它判断自己是否已被取代（取代后静默）。
     private var generation = 0
@@ -31,9 +34,11 @@ final class TranslationEngine {
     private var timedOutGeneration: Int?
 
     init(client: OpenAICompatibleClient = OpenAICompatibleClient(),
-         firstTokenTimeout: TimeInterval = BehaviorConstants.firstTokenTimeout) {
+         firstTokenTimeout: TimeInterval = BehaviorConstants.firstTokenTimeout,
+         requestLog: RequestLog? = nil) {
         self.client = client
         self.firstTokenTimeout = firstTokenTimeout
+        self.requestLog = requestLog
     }
 
     /// 是否有进行中的请求（未终态、未被取代）。
@@ -147,12 +152,24 @@ final class TranslationEngine {
         // 先作废旧请求：其挂起的网络与待发事件全部失效
         currentTask?.cancel()
 
+        let logDraft = requestLog.map { _ in
+            RequestLogDraft(startedAt: Date(), config: config, target: target, text: text, images: images)
+        }
+
         currentTask = Task { [weak self] in
             guard let self else { return }
+            // 请求结束（任何出口）写一条日志；没有终态事件的记为取消。
+            // 还没发出就被取消的（同一回合内被取代 / 清空）不记
+            defer {
+                if let logDraft, logDraft.wasSent {
+                    self.requestLog?.append(logDraft.record(endedAt: Date()))
+                }
+            }
 
             /// 只按代际判定有效性：被取代 / 显式取消都会推进代际。
             /// 不能检查 Task.isCancelled——首字超时正是靠取消本任务中断流的，超时事件仍需上报。
             let emit: @MainActor (TranslationEvent) -> Void = { event in
+                logDraft?.observe(event)   // 日志按请求真实结果记录，不受是否被取代影响
                 guard self.generation == myGeneration else { return }
                 onEvent(event)
             }
@@ -171,6 +188,7 @@ final class TranslationEngine {
 
             let body = Self.translationBody(text: text, images: images, target: target, customPrompt: customPrompt, config: config)
             let bytes: URLSession.AsyncBytes
+            if !Task.isCancelled { logDraft?.markSent() }
             do {
                 bytes = try await self.client.openStream(config: config, body: body)
             } catch let urlError as URLError where urlError.code == .cancelled {
@@ -213,6 +231,7 @@ final class TranslationEngine {
                 for await internalEvent in stream {
                     switch internalEvent {
                     case .firstContent:
+                        logDraft?.markFirstContent(at: Date())
                         watchdog.cancel()   // 首字到达，解除看门狗（Task.cancel 线程安全）
                     case .ui(let event):
                         emit(event)
@@ -235,7 +254,7 @@ final class TranslationEngine {
         }
     }
 
-    /// 显式取消当前请求（如 ⌘N 清空），取消后不再上报事件（收起不取消，仅清空取消）。
+    /// 显式取消当前请求（如 ⌘N 清空），取消后不再上报事件（⌘N 清空、载入历史、重新呼出时调用）。
     func cancel() {
         generation += 1
         currentTask?.cancel()

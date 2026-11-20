@@ -69,6 +69,8 @@ enum AppText {
     static let settingsSaveHistory = "保存翻译历史"
     static let settingsSaveHistoryNote = "只保存在本机，最多占用 500 MB，超出时自动删除最旧的记录。"
     static let settingsClearHistory = "清空历史…"
+    static let settingsRequestLogNote = "每次模型请求（含原文、译文、耗时与失败原因）记录在本机，保留 90 天，不含 API Key。"
+    static let settingsOpenRequestLog = "打开请求日志"
     static let settingsClearHistoryConfirmTitle = "清空全部翻译历史？"
     static let settingsClearHistoryConfirmMessage = "所有记录与图片将被删除，无法恢复。"
     static let settingsClearHistoryConfirmButton = "清空"
@@ -138,8 +140,8 @@ enum AppText {
 
     // MARK: 翻译引擎错误
 
-    /// 首字超过 15 秒。数字与 BehaviorConstants.firstTokenTimeout 对应。
-    static let translateFirstTokenTimeout = "15 秒内没有收到译文开头，已停止请求。可以重试。"
+    /// 首字超过 25 秒。数字与 BehaviorConstants.firstTokenTimeout 对应。
+    static let translateFirstTokenTimeout = "25 秒内没有收到译文开头，已停止请求。可以重试。"
     static let translateStreamInterrupted = "译文传输中断，已收到的部分标注为未完成。"
     static let translateModelNoImages = "所选模型不支持图片输入，请在设置里更换模型。"
     static let translateModelRefused = "模型拒绝了这段内容。"

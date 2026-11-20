@@ -49,7 +49,7 @@ private enum ImageInput: Sendable {
 
 /// 浮窗视图模型：一轮翻译的完整状态机。
 /// 事件消费来自 TranslationEngine；只在 ↩ / ⌘R 时发请求（粘贴、切语言都不自动翻译）；
-/// 呼出不读剪贴板；收起不清内容（保留 10 分钟）；成功完成的一轮写入翻译历史。
+/// 呼出不读剪贴板；每次呼出都是空的（不保留上一轮）；成功完成的一轮写入翻译历史。
 @MainActor
 final class PanelViewModel: ObservableObject {
 
@@ -105,8 +105,6 @@ final class PanelViewModel: ObservableObject {
     private var targetAtRoundStart: TargetMode = .automatic
     /// 本轮翻译发起时发送的图片（完成后写入历史）
     private var imagesAtRoundStart: [ProcessedImage] = []
-    /// 最近一轮活动时间（收起时锚定，10 分钟保留判定）
-    private var lastRoundActivityAt: Date?
     private var copyConfirmTask: Task<Void, Never>?
     private let imageProcessingMode: ImageProcessingMode
     /// 图片批次代际：新一轮 / 清空时 +1，作废尚未处理完的批次
@@ -149,7 +147,7 @@ final class PanelViewModel: ObservableObject {
 
     // MARK: 呼出 / 收起
 
-    /// 呼出：不读剪贴板；10 分钟内保留上轮内容，否则为空。
+    /// 呼出：不读剪贴板；每次都从空白开始，上一轮（含还没翻完的请求）不保留。
     func panelWillShow() {
         // 固定状态不跨呼出记忆：呼出恢复非固定
         isPinned = false
@@ -163,19 +161,14 @@ final class PanelViewModel: ObservableObject {
             // 配置问题在翻译时提示，预热静默跳过
         }
 
-        // 保留期内的上一轮继续显示
-        if let lastActivity = lastRoundActivityAt,
-           now().timeIntervalSince(lastActivity) <= BehaviorConstants.contentRetentionInterval {
-            return
-        }
+        // 收起时还在翻译的请求一并取消，迟到的译文不会出现在新一轮里
+        engine.cancel()
         resetToEmpty()
     }
 
-    /// 收起：内容保留，锚定保留期；翻译请求继续、结果保留。
-    /// 收起同时解除固定（呼出复位是第二道保险）。
+    /// 收起：解除固定（呼出复位是第二道保险）。翻译请求在下次呼出前继续，完成即写入历史。
     func panelDidCollapse() {
         isPinned = false
-        lastRoundActivityAt = now()
     }
 
     // MARK: 输入与触发
@@ -363,7 +356,6 @@ final class PanelViewModel: ObservableObject {
         resultText = ""
         marker = nil
         phase = .translating
-        lastRoundActivityAt = now()
 
         engine.translate(
             text: inputText,
@@ -557,7 +549,6 @@ final class PanelViewModel: ObservableObject {
             resultText += text
         case .finished(let finishedMarker, let body):
             resultText = body
-            lastRoundActivityAt = now()
             saveRoundToHistory(marker: finishedMarker, body: body)
             if isRoundContentUnchanged {
                 marker = finishedMarker
@@ -570,7 +561,6 @@ final class PanelViewModel: ObservableObject {
             }
         case .failed(let failure):
             phase = .failed(failure)
-            lastRoundActivityAt = now()
         }
     }
 
@@ -639,16 +629,14 @@ final class PanelViewModel: ObservableObject {
         imageIDsAtRoundStart = images.map(\.id)
         targetAtRoundStart = targetMode
         imagesAtRoundStart = processed
-        lastRoundActivityAt = now()
         isShowingHistory = false
     }
 
-    /// 一轮结束（复制带走）：手动目标复位，输入保留至保留期。
+    /// 一轮结束（复制带走）：手动目标复位，本次呼出内保留输入与译文。
     private func endRound() {
         targetMode = .automatic
-        // 复位不算"改了语言"：保留期内再按 ↩ 仍是复制这轮译文
+        // 复位不算"改了语言"：固定时再按 ↩ 仍是复制这轮译文
         targetAtRoundStart = targetMode
-        lastRoundActivityAt = now()
     }
 
     private func resetToEmpty() {

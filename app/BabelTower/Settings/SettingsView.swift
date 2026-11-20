@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import KeyboardShortcuts
 
 /// 完整设置窗口：模型服务、快捷键、翻译语言、登录时启动、界面语言说明。
@@ -7,6 +8,7 @@ struct SettingsView: View {
     @EnvironmentObject private var appSettings: AppSettings
     /// 翻译历史（清空用）；nil 时不显示清空按钮
     var history: HistoryStore?
+    var requestLog: RequestLog?
     @State private var confirmingClearHistory = false
 
     var body: some View {
@@ -67,6 +69,19 @@ struct SettingsView: View {
                     if history != nil {
                         Button(AppText.settingsClearHistory) {
                             confirmingClearHistory = true
+                        }
+                    }
+                }
+                if let requestLog {
+                    HStack {
+                        Text(AppText.settingsRequestLogNote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(AppText.settingsOpenRequestLog) {
+                            try? FileManager.default.createDirectory(
+                                at: requestLog.directory, withIntermediateDirectories: true)
+                            NSWorkspace.shared.open(requestLog.directory)
                         }
                     }
                 }
