@@ -9,8 +9,8 @@ enum BehaviorConstants {
     /// 自定义提示词上限 10,000 字符（与文字输入上限一致）。
     static let maxPromptCharacters = 10_000
 
-    /// 首字超时 25 秒，超时按异常提示并附重试。
-    static let firstTokenTimeout: TimeInterval = 25
+    /// 首字超时 60 秒，超时按异常提示并附重试。
+    static let firstTokenTimeout: TimeInterval = 60
 
     /// 模型请求日志保留 90 天（本机，超期按天删除）。
     static let requestLogRetentionDays = 90

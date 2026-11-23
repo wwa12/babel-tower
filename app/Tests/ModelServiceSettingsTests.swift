@@ -174,6 +174,67 @@ final class ModelServiceSettingsTests: XCTestCase {
             XCTAssertEqual(error as? ServiceConfigError, .missingModel)
         }
     }
+
+    // MARK: 自定义服务的关闭思考参数
+
+    private func makeReadyCustomSettings() throws -> ModelServiceSettings {
+        let settings = makeSettings()
+        settings.selectedPresetID = ServicePreset.customPresetID
+        settings.customBaseURL = "https://虚构网关.example/v1"
+        settings.setModelName("虚构模型", forPresetID: ServicePreset.customPresetID)
+        try settings.setAPIKey("虚构测试Key-custom", forPresetID: ServicePreset.customPresetID)
+        return settings
+    }
+
+    /// 默认不发送任何关闭思考参数（保持升级前的请求体不变）。
+    func testCustomThinkingOptionDefaultsToNone() throws {
+        let settings = try makeReadyCustomSettings()
+        XCTAssertEqual(settings.customThinkingOptionID, CustomThinkingOption.noneID)
+        XCTAssertTrue(try settings.resolvedConfig().disableThinkingParameters.isEmpty)
+    }
+
+    /// 每个选项把对应参数并入自定义服务的请求配置。
+    func testCustomThinkingOptionResolvesToParameters() throws {
+        let settings = try makeReadyCustomSettings()
+        for option in CustomThinkingOption.all {
+            settings.customThinkingOptionID = option.id
+            XCTAssertEqual(try settings.resolvedConfig().disableThinkingParameters, option.parameters, option.id)
+        }
+        settings.customThinkingOptionID = "enableThinking"
+        XCTAssertEqual(try settings.resolvedConfig().disableThinkingParameters["enable_thinking"], .bool(false))
+    }
+
+    /// 自定义的选项不影响内置预设：内置预设始终用自己声明的参数。
+    func testCustomThinkingOptionDoesNotAffectBuiltInPresets() throws {
+        let settings = try makeReadyCustomSettings()
+        settings.customThinkingOptionID = "enableThinking"
+        try settings.setAPIKey("虚构测试Key-openai", forPresetID: "openai")
+        settings.selectedPresetID = "openai"
+        XCTAssertEqual(try settings.resolvedConfig().disableThinkingParameters,
+                       ServicePreset.preset(id: "openai")!.disableThinkingParameters)
+    }
+
+    /// 选项跨重启保留；存了未知值时回落到不发送。
+    func testCustomThinkingOptionPersistsAndFallsBack() throws {
+        let settings = makeSettings()
+        settings.customThinkingOptionID = "thinkingType"
+        XCTAssertEqual(makeSettings().customThinkingOptionID, "thinkingType")
+
+        defaults.set("不存在的选项", forKey: "modelService.customThinkingOption")
+        XCTAssertEqual(makeSettings().customThinkingOptionID, CustomThinkingOption.noneID)
+    }
+
+    /// 选项参数与内置预设同源：百炼 / OpenAI / 火山方舟的关闭思考写法各一个。
+    func testCustomThinkingOptionsMirrorBuiltInPresets() {
+        XCTAssertEqual(CustomThinkingOption.all.map(\.id),
+                       [CustomThinkingOption.noneID, "enableThinking", "reasoningEffort", "thinkingType"])
+        XCTAssertEqual(CustomThinkingOption.option(id: "enableThinking")?.parameters,
+                       ServicePreset.preset(id: "dashscope")!.disableThinkingParameters)
+        XCTAssertEqual(CustomThinkingOption.option(id: "reasoningEffort")?.parameters,
+                       ServicePreset.preset(id: "openai")!.disableThinkingParameters)
+        XCTAssertEqual(CustomThinkingOption.option(id: "thinkingType")?.parameters,
+                       ServicePreset.preset(id: "volcengineArk")!.disableThinkingParameters)
+    }
 }
 
 /// 内存版 Keychain 替身：让设置层测试不碰真实钥匙串。

@@ -45,8 +45,9 @@ struct OpenAICompatibleClient {
                                 body: [String: JSONValue]) throws -> URLRequest {
         var request = URLRequest(url: config.endpoint)
         request.httpMethod = "POST"
-        // 流式请求的超时是相邻数据包间的空闲超时；首字 25 秒超时由引擎层计时
-        request.timeoutInterval = 60
+        // 流式请求的超时是相邻数据包间的空闲超时；首字超时由引擎层计时。
+        // 空闲超时须长于首字超时，否则没有心跳的服务会先报网络错误而不是首字超时。
+        request.timeoutInterval = BehaviorConstants.firstTokenTimeout + 30
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")

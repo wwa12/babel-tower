@@ -41,6 +41,11 @@ final class ModelServiceSettings: ObservableObject {
         didSet { defaults.set(customBaseURL, forKey: Keys.customBaseURL) }
     }
 
+    /// 自定义服务的关闭思考选项（CustomThinkingOption.id）；内置预设不受影响。
+    @Published var customThinkingOptionID: String {
+        didSet { defaults.set(customThinkingOptionID, forKey: Keys.customThinkingOption) }
+    }
+
     @Published private(set) var modelOverrides: [String: String] {
         didSet { defaults.set(modelOverrides, forKey: Keys.modelOverrides) }
     }
@@ -61,6 +66,7 @@ final class ModelServiceSettings: ObservableObject {
         static let presetID = "modelService.presetID"
         static let customBaseURL = "modelService.customBaseURL"
         static let modelOverrides = "modelService.modelOverrides"
+        static let customThinkingOption = "modelService.customThinkingOption"
     }
 
     init(keyStore: APIKeyStore = KeychainStore(), defaults: UserDefaults = .standard) {
@@ -70,6 +76,8 @@ final class ModelServiceSettings: ObservableObject {
         let savedPresetID = defaults.string(forKey: Keys.presetID) ?? ""
         selectedPresetID = ServicePreset.preset(id: savedPresetID)?.id ?? ServicePreset.allPresets[0].id
         customBaseURL = defaults.string(forKey: Keys.customBaseURL) ?? ""
+        let savedThinkingID = defaults.string(forKey: Keys.customThinkingOption) ?? ""
+        customThinkingOptionID = CustomThinkingOption.option(id: savedThinkingID)?.id ?? CustomThinkingOption.noneID
         modelOverrides = defaults.dictionary(forKey: Keys.modelOverrides) as? [String: String] ?? [:]
     }
 
@@ -205,7 +213,9 @@ final class ModelServiceSettings: ObservableObject {
             model: model,
             endpoint: base.appendingPathComponent("chat/completions"),
             apiKey: key,
-            disableThinkingParameters: preset.disableThinkingParameters,
+            disableThinkingParameters: preset.isCustom
+                ? (CustomThinkingOption.option(id: customThinkingOptionID)?.parameters ?? [:])
+                : preset.disableThinkingParameters,
             supportsImages: preset.supportsImages
         )
     }

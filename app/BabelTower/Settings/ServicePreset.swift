@@ -62,3 +62,35 @@ extension ServicePreset {
         allPresets.first { $0.id == id }
     }
 }
+
+/// 自定义服务的「关闭思考」选项：自定义服务无法预知接口写法，由用户按服务选择。
+/// 参数与内置预设同源（百炼 / OpenAI / 火山方舟各一种写法），代码不按服务名分支。
+struct CustomThinkingOption: Identifiable, Hashable, Sendable {
+    static let noneID = "none"
+
+    let id: String
+    /// 下拉框里显示的名称
+    let displayName: String
+    /// 原样并入请求体的参数；「不发送」为空
+    let parameters: [String: JSONValue]
+
+    /// 展示顺序即列表顺序；默认「不发送」，保持升级前的请求体不变。
+    static let all: [CustomThinkingOption] = [
+        CustomThinkingOption(id: noneID, displayName: AppText.settingsCustomThinkingNone, parameters: [:]),
+        option(id: "enableThinking", copying: "dashscope", displayName: "enable_thinking: false（通义千问等）"),
+        option(id: "reasoningEffort", copying: "openai", displayName: "reasoning_effort: none（OpenAI 等）"),
+        option(id: "thinkingType", copying: "volcengineArk", displayName: "thinking.type: disabled（豆包等）"),
+    ]
+
+    static func option(id: String) -> CustomThinkingOption? {
+        all.first { $0.id == id }
+    }
+
+    private static func option(id: String, copying presetID: String, displayName: String) -> CustomThinkingOption {
+        CustomThinkingOption(
+            id: id,
+            displayName: displayName,
+            parameters: ServicePreset.preset(id: presetID)?.disableThinkingParameters ?? [:]
+        )
+    }
+}

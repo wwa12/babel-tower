@@ -43,6 +43,12 @@ final class OpenAICompatibleClientTests: XCTestCase {
         XCTAssertEqual(request.timeoutInterval, BehaviorConstants.testConnectionTimeout)
     }
 
+    /// 流式翻译请求的空闲超时长于首字超时：首字超时先触发，不被网络超时抢先。
+    func testChatRequestIdleTimeoutExceedsFirstTokenTimeout() throws {
+        let request = try OpenAICompatibleClient.makeChatRequest(config: makeConfig(), body: [:])
+        XCTAssertGreaterThan(request.timeoutInterval, BehaviorConstants.firstTokenTimeout)
+    }
+
     /// 请求体：极短消息 + stream=false + 预设的关闭思考参数合并。
     func testMakeRequestBodyMergesDisableThinkingParameters() throws {
         let request = try OpenAICompatibleClient.makeTestConnectionRequest(config: makeConfig())

@@ -14,7 +14,7 @@ enum TranslationFailure: Error, Equatable, Sendable {
     case serviceError(status: Int, detail: String?)
     /// 没有网络 / 连接失败 / 连接超时 → 重试
     case networkUnavailable
-    /// 首字超过 25 秒→ 重试
+    /// 首字超过 60 秒→ 重试
     case firstTokenTimeout
     /// 流式输出中断：已发出的译文增量有效，界面标注"未完成"→ 重试
     case streamInterrupted(detail: String?)
@@ -101,7 +101,7 @@ enum TranslationFailure: Error, Equatable, Sendable {
 
     /// 网络层错误到分类的映射：全部网络层错误统一归"网络问题，可重试"——
     /// 断网、DNS、连接失败、连接超时对用户没有行动差异（都是检查网络后重试），
-    /// 首字 25 秒超时是引擎层的看门狗，不走此映射。
+    /// 首字 60 秒超时是引擎层的看门狗，不走此映射。
     static func from(error _: URLError) -> TranslationFailure {
         .networkUnavailable
     }

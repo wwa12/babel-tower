@@ -49,6 +49,21 @@ struct ServiceSettingsForm: View {
 
             TextField(AppText.settingsModelField, text: modelBinding, prompt: Text(modelPlaceholder))
 
+            if settings.selectedPreset.isCustom {
+                Picker(AppText.settingsCustomThinkingField, selection: $settings.customThinkingOptionID) {
+                    ForEach(CustomThinkingOption.all) { option in
+                        Text(option.displayName).tag(option.id)
+                    }
+                }
+                // 换了写法，上一次的测试结果不再代表当前配置
+                .onChange(of: settings.customThinkingOptionID) { _, _ in
+                    testPhase = .idle
+                }
+                Text(AppText.settingsCustomThinkingNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack {
                 Button(AppText.settingsTestButton, action: runTestConnection)
                     .disabled(testPhase == .running)
@@ -109,10 +124,12 @@ struct ServiceSettingsForm: View {
         }
 
         testPhase = .running
+        let thinkingOptionID = settings.customThinkingOptionID
         Task { @MainActor in
             let outcome = await client.testConnection(config: config)
-            // 请求期间可能已切换预设，旧预设的结果不得上屏到新预设页面
-            guard config.presetID == settings.selectedPresetID else { return }
+            // 请求期间可能已切换预设或关闭思考写法，旧配置的结果不得上屏
+            guard config.presetID == settings.selectedPresetID,
+                  thinkingOptionID == settings.customThinkingOptionID else { return }
             switch outcome {
             case .success:
                 testPhase = .finished(message: AppText.testSuccess, isSuccess: true)

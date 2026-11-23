@@ -18,6 +18,9 @@ enum AppText {
     static let settingsAPIKeyPlaceholder = "sk-…"
     static let settingsAPIKeySaved = "已保存到钥匙串"
     static let settingsAPIKeyCleared = "已从钥匙串删除"
+    static let settingsCustomThinkingField = "关闭思考"
+    static let settingsCustomThinkingNone = "不发送"
+    static let settingsCustomThinkingNote = "推理模型会先思考再输出译文，长文可能很久才出字。按你的服务支持的写法选择；选错时服务可能报错，可用「测试连接」检查。"
     static let settingsModelPlaceholder = "例如 gpt-6-luna"
     static let settingsTestButton = "测试连接"
     static let settingsTesting = "测试中…"
@@ -140,8 +143,8 @@ enum AppText {
 
     // MARK: 翻译引擎错误
 
-    /// 首字超过 25 秒。数字与 BehaviorConstants.firstTokenTimeout 对应。
-    static let translateFirstTokenTimeout = "25 秒内没有收到译文开头，已停止请求。可以重试。"
+    /// 首字超过 60 秒。数字与 BehaviorConstants.firstTokenTimeout 对应。
+    static let translateFirstTokenTimeout = "60 秒内没有收到译文开头，已停止请求。可以重试。"
     static let translateStreamInterrupted = "译文传输中断，已收到的部分标注为未完成。"
     static let translateModelNoImages = "所选模型不支持图片输入，请在设置里更换模型。"
     static let translateModelRefused = "模型拒绝了这段内容。"
